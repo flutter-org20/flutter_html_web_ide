@@ -10,42 +10,6 @@ function sanitizeCode(code) {
   return code.replace(/\u00A0/g, " ").replace(/\u2028/g, "\n").replace(/\u2029/g, "\n");
 }
 
-// --- Helper function to format code using Black in Pyodide ---
-async function formatPythonCodeWithBlack(code) {
-  if (!pyodide) {
-    console.error("Pyodide not loaded, cannot format.");
-    throw new Error("Pyodide not loaded");
-  }
-
-  const sanitizedCode = sanitizeCode(code);
-
-  try {
-    // Pass the code to the Python environment
-    pyodide.globals.set("unformatted_code", sanitizedCode);
-
-    // Let Pyodide handle exceptions. If this fails, the promise will reject
-    // and be caught by the JavaScript 'catch' block.
-    const formattedCode = await pyodide.runPythonAsync(`
-import black
-
-# Get the code from the global scope
-source_code = unformatted_code
-
-# Configure black's formatting mode
-mode = black.FileMode(line_length=88, string_normalization=True)
-
-# Format the string. This will raise an exception on invalid syntax.
-black.format_str(source_code, mode=mode)
-    `);
-
-    return formattedCode;
-  } catch (err) {
-    // This will now catch Python exceptions directly!
-    console.error("Error during Pyodide formatting execution:", err);
-    throw err; // Re-throw to be caught by the Monaco format provider
-  }
-}
-
 // Function to initialize Monaco only once
 function loadMonaco() {
   if (!monacoLoadPromise) {
@@ -65,136 +29,244 @@ function loadMonaco() {
 
 console.log('Monaco Interop JavaScript loaded');
 
-// Pre-define Python suggestions for faster lookup (defined once globally)
-const pythonSuggestions = [
-  // Keywords
-  { label: 'def', kind: 14, insertText: 'def ${1:function_name}(${2:parameters}):\n    ${3:pass}', insertTextRules: 4 },
-  { label: 'class', kind: 14, insertText: 'class ${1:ClassName}:\n    def __init__(self${2:, args}):\n        ${3:pass}', insertTextRules: 4 },
-  { label: 'if', kind: 14, insertText: 'if ${1:condition}:\n    ${2:pass}', insertTextRules: 4 },
-  { label: 'elif', kind: 14, insertText: 'elif ${1:condition}:\n    ${2:pass}', insertTextRules: 4 },
-  { label: 'else', kind: 14, insertText: 'else:\n    ${1:pass}', insertTextRules: 4 },
-  { label: 'for', kind: 14, insertText: 'for ${1:item} in ${2:iterable}:\n    ${3:pass}', insertTextRules: 4 },
-  { label: 'while', kind: 14, insertText: 'while ${1:condition}:\n    ${2:pass}', insertTextRules: 4 },
-  { label: 'try', kind: 14, insertText: 'try:\n    ${1:pass}\nexcept ${2:Exception} as ${3:e}:\n    ${4:pass}', insertTextRules: 4 },
-  { label: 'except', kind: 14, insertText: 'except ${1:Exception} as ${2:e}:\n    ${3:pass}', insertTextRules: 4 },
-  { label: 'finally', kind: 14, insertText: 'finally:\n    ${1:pass}', insertTextRules: 4 },
-  { label: 'with', kind: 14, insertText: 'with ${1:expression} as ${2:variable}:\n    ${3:pass}', insertTextRules: 4 },
-  { label: 'import', kind: 14, insertText: 'import ${1:module}', insertTextRules: 4 },
-  { label: 'from', kind: 14, insertText: 'from ${1:module} import ${2:name}', insertTextRules: 4 },
-  { label: 'return', kind: 14, insertText: 'return ${1:value}', insertTextRules: 4 },
-  { label: 'yield', kind: 14, insertText: 'yield ${1:value}', insertTextRules: 4 },
-  { label: 'break', kind: 14, insertText: 'break' },
-  { label: 'continue', kind: 14, insertText: 'continue' },
-  { label: 'pass', kind: 14, insertText: 'pass' },
-  { label: 'lambda', kind: 14, insertText: 'lambda ${1:args}: ${2:expression}', insertTextRules: 4 },
-  { label: 'async', kind: 14, insertText: 'async def ${1:function_name}(${2:parameters}):\n    ${3:pass}', insertTextRules: 4 },
-  { label: 'await', kind: 14, insertText: 'await ${1:expression}', insertTextRules: 4 },
-  { label: 'global', kind: 14, insertText: 'global ${1:variable}', insertTextRules: 4 },
-  { label: 'nonlocal', kind: 14, insertText: 'nonlocal ${1:variable}', insertTextRules: 4 },
-  { label: 'raise', kind: 14, insertText: 'raise ${1:Exception}', insertTextRules: 4 },
-  { label: 'assert', kind: 14, insertText: 'assert ${1:condition}', insertTextRules: 4 },
-  { label: 'del', kind: 14, insertText: 'del ${1:variable}', insertTextRules: 4 },
+// Web development suggestions for HTML, CSS, and JavaScript
+const htmlSuggestions = [
+  // HTML Tags
+  { label: 'div', kind: 25, insertText: '<div>${1}>${2}</div>', insertTextRules: 4 },
+  { label: 'span', kind: 25, insertText: '<span>${1}>${2}</span>', insertTextRules: 4 },
+  { label: 'p', kind: 25, insertText: '<p>${1}</p>', insertTextRules: 4 },
+  { label: 'h1', kind: 25, insertText: '<h1>${1}</h1>', insertTextRules: 4 },
+  { label: 'h2', kind: 25, insertText: '<h2>${1}</h2>', insertTextRules: 4 },
+  { label: 'h3', kind: 25, insertText: '<h3>${1}</h3>', insertTextRules: 4 },
+  { label: 'a', kind: 25, insertText: '<a href="${1}">${2}</a>', insertTextRules: 4 },
+  { label: 'img', kind: 25, insertText: '<img src="${1}" alt="${2}">', insertTextRules: 4 },
+  { label: 'input', kind: 25, insertText: '<input type="${1}" value="${2}">', insertTextRules: 4 },
+  { label: 'button', kind: 25, insertText: '<button>${1}</button>', insertTextRules: 4 },
+  { label: 'form', kind: 25, insertText: '<form>${1}</form>', insertTextRules: 4 },
+  { label: 'ul', kind: 25, insertText: '<ul>\n  <li>${1}</li>\n</ul>', insertTextRules: 4 },
+  { label: 'ol', kind: 25, insertText: '<ol>\n  <li>${1}</li>\n</ol>', insertTextRules: 4 },
+  { label: 'li', kind: 25, insertText: '<li>${1}</li>', insertTextRules: 4 },
+  { label: 'table', kind: 25, insertText: '<table>\n  <tr>\n    <td>${1}</td>\n  </tr>\n</table>', insertTextRules: 4 },
+  { label: 'tr', kind: 25, insertText: '<tr>${1}</tr>', insertTextRules: 4 },
+  { label: 'td', kind: 25, insertText: '<td>${1}</td>', insertTextRules: 4 },
+  { label: 'th', kind: 25, insertText: '<th>${1}</th>', insertTextRules: 4 },
+  { label: 'head', kind: 25, insertText: '<head>${1}</head>', insertTextRules: 4 },
+  { label: 'body', kind: 25, insertText: '<body>${1}</body>', insertTextRules: 4 },
+  { label: 'html', kind: 25, insertText: '<html>\n<head>\n  <title>${1}</title>\n</head>\n<body>\n  ${2}\n</body>\n</html>', insertTextRules: 4 },
   
-  // Additional 'p' keywords and decorators
-  { label: 'property', kind: 10, insertText: '@property\ndef ${1:name}(self):\n    return ${2:value}', insertTextRules: 4 },
-  { label: 'partial', kind: 3, insertText: 'partial(${1:func}, ${2:args})', insertTextRules: 4 },
-  { label: 'pathlib', kind: 9, insertText: 'from pathlib import Path', insertTextRules: 4 },
-  
-  // Built-in functions
-  { label: 'print', kind: 3, insertText: 'print(${1:value})', insertTextRules: 4 },
-  { label: 'len', kind: 3, insertText: 'len(${1:obj})', insertTextRules: 4 },
-  { label: 'range', kind: 3, insertText: 'range(${1:stop})', insertTextRules: 4 },
-  { label: 'enumerate', kind: 3, insertText: 'enumerate(${1:iterable})', insertTextRules: 4 },
-  { label: 'zip', kind: 3, insertText: 'zip(${1:iterable1}, ${2:iterable2})', insertTextRules: 4 },
-  { label: 'map', kind: 3, insertText: 'map(${1:function}, ${2:iterable})', insertTextRules: 4 },
-  { label: 'filter', kind: 3, insertText: 'filter(${1:function}, ${2:iterable})', insertTextRules: 4 },
-  { label: 'sorted', kind: 3, insertText: 'sorted(${1:iterable})', insertTextRules: 4 },
-  { label: 'sum', kind: 3, insertText: 'sum(${1:iterable})', insertTextRules: 4 },
-  { label: 'max', kind: 3, insertText: 'max(${1:iterable})', insertTextRules: 4 },
-  { label: 'min', kind: 3, insertText: 'min(${1:iterable})', insertTextRules: 4 },
-  { label: 'abs', kind: 3, insertText: 'abs(${1:number})', insertTextRules: 4 },
-  { label: 'round', kind: 3, insertText: 'round(${1:number})', insertTextRules: 4 },
-  { label: 'input', kind: 3, insertText: 'input(${1:prompt})', insertTextRules: 4 },
-  { label: 'open', kind: 3, insertText: 'open(${1:filename}, ${2:mode})', insertTextRules: 4 },
-  { label: 'type', kind: 3, insertText: 'type(${1:obj})', insertTextRules: 4 },
-  { label: 'isinstance', kind: 3, insertText: 'isinstance(${1:obj}, ${2:type})', insertTextRules: 4 },
-  { label: 'hasattr', kind: 3, insertText: 'hasattr(${1:obj}, ${2:attr})', insertTextRules: 4 },
-  { label: 'getattr', kind: 3, insertText: 'getattr(${1:obj}, ${2:attr})', insertTextRules: 4 },
-  { label: 'setattr', kind: 3, insertText: 'setattr(${1:obj}, ${2:attr}, ${3:value})', insertTextRules: 4 },
-  { label: 'pow', kind: 3, insertText: 'pow(${1:base}, ${2:exp})', insertTextRules: 4 },
-  
-  // Built-in types
-  { label: 'str', kind: 7, insertText: 'str(${1:obj})', insertTextRules: 4 },
-  { label: 'int', kind: 7, insertText: 'int(${1:obj})', insertTextRules: 4 },
-  { label: 'float', kind: 7, insertText: 'float(${1:obj})', insertTextRules: 4 },
-  { label: 'bool', kind: 7, insertText: 'bool(${1:obj})', insertTextRules: 4 },
-  { label: 'list', kind: 7, insertText: 'list(${1:iterable})', insertTextRules: 4 },
-  { label: 'tuple', kind: 7, insertText: 'tuple(${1:iterable})', insertTextRules: 4 },
-  { label: 'dict', kind: 7, insertText: 'dict(${1:mapping})', insertTextRules: 4 },
-  { label: 'set', kind: 7, insertText: 'set(${1:iterable})', insertTextRules: 4 },
-  
-  // Constants
-  { label: 'True', kind: 21, insertText: 'True' },
-  { label: 'False', kind: 21, insertText: 'False' },
-  { label: 'None', kind: 21, insertText: 'None' },
-  
-  // Magic methods
-  { label: '__init__', kind: 2, insertText: 'def __init__(self${1:, args}):\n    ${2:pass}', insertTextRules: 4 },
-  { label: '__str__', kind: 2, insertText: 'def __str__(self):\n    return ${1:"string representation"}', insertTextRules: 4 },
-  { label: '__repr__', kind: 2, insertText: 'def __repr__(self):\n    return ${1:"repr string"}', insertTextRules: 4 },
-  { label: '__len__', kind: 2, insertText: 'def __len__(self):\n    return ${1:length}', insertTextRules: 4 }
+  // HTML Attributes
+  { label: 'class', kind: 10, insertText: 'class="${1}"', insertTextRules: 4 },
+  { label: 'id', kind: 10, insertText: 'id="${1}"', insertTextRules: 4 },
+  { label: 'src', kind: 10, insertText: 'src="${1}"', insertTextRules: 4 },
+  { label: 'href', kind: 10, insertText: 'href="${1}"', insertTextRules: 4 },
+  { label: 'alt', kind: 10, insertText: 'alt="${1}"', insertTextRules: 4 },
+  { label: 'style', kind: 10, insertText: 'style="${1}"', insertTextRules: 4 },
+  { label: 'onclick', kind: 10, insertText: 'onclick="${1}"', insertTextRules: 4 },
+  { label: 'onload', kind: 10, insertText: 'onload="${1}"', insertTextRules: 4 },
+  { label: 'type', kind: 10, insertText: 'type="${1}"', insertTextRules: 4 },
+  { label: 'value', kind: 10, insertText: 'value="${1}"', insertTextRules: 4 }
 ];
 
-// Global flag to ensure completion provider is registered only once
-let pythonCompletionProviderRegistered = false;
+const cssSuggestions = [
+  // CSS Properties
+  { label: 'color', kind: 19, insertText: 'color: ${1};', insertTextRules: 4 },
+  { label: 'background-color', kind: 19, insertText: 'background-color: ${1};', insertTextRules: 4 },
+  { label: 'background', kind: 19, insertText: 'background: ${1};', insertTextRules: 4 },
+  { label: 'font-size', kind: 19, insertText: 'font-size: ${1};', insertTextRules: 4 },
+  { label: 'font-family', kind: 19, insertText: 'font-family: ${1};', insertTextRules: 4 },
+  { label: 'font-weight', kind: 19, insertText: 'font-weight: ${1};', insertTextRules: 4 },
+  { label: 'margin', kind: 19, insertText: 'margin: ${1};', insertTextRules: 4 },
+  { label: 'margin-top', kind: 19, insertText: 'margin-top: ${1};', insertTextRules: 4 },
+  { label: 'margin-right', kind: 19, insertText: 'margin-right: ${1};', insertTextRules: 4 },
+  { label: 'margin-bottom', kind: 19, insertText: 'margin-bottom: ${1};', insertTextRules: 4 },
+  { label: 'margin-left', kind: 19, insertText: 'margin-left: ${1};', insertTextRules: 4 },
+  { label: 'padding', kind: 19, insertText: 'padding: ${1};', insertTextRules: 4 },
+  { label: 'padding-top', kind: 19, insertText: 'padding-top: ${1};', insertTextRules: 4 },
+  { label: 'padding-right', kind: 19, insertText: 'padding-right: ${1};', insertTextRules: 4 },
+  { label: 'padding-bottom', kind: 19, insertText: 'padding-bottom: ${1};', insertTextRules: 4 },
+  { label: 'padding-left', kind: 19, insertText: 'padding-left: ${1};', insertTextRules: 4 },
+  { label: 'width', kind: 19, insertText: 'width: ${1};', insertTextRules: 4 },
+  { label: 'height', kind: 19, insertText: 'height: ${1};', insertTextRules: 4 },
+  { label: 'max-width', kind: 19, insertText: 'max-width: ${1};', insertTextRules: 4 },
+  { label: 'max-height', kind: 19, insertText: 'max-height: ${1};', insertTextRules: 4 },
+  { label: 'min-width', kind: 19, insertText: 'min-width: ${1};', insertTextRules: 4 },
+  { label: 'min-height', kind: 19, insertText: 'min-height: ${1};', insertTextRules: 4 },
+  { label: 'display', kind: 19, insertText: 'display: ${1|block,inline,flex,grid,none|};', insertTextRules: 4 },
+  { label: 'position', kind: 19, insertText: 'position: ${1|static,relative,absolute,fixed,sticky|};', insertTextRules: 4 },
+  { label: 'top', kind: 19, insertText: 'top: ${1};', insertTextRules: 4 },
+  { label: 'left', kind: 19, insertText: 'left: ${1};', insertTextRules: 4 },
+  { label: 'right', kind: 19, insertText: 'right: ${1};', insertTextRules: 4 },
+  { label: 'bottom', kind: 19, insertText: 'bottom: ${1};', insertTextRules: 4 },
+  { label: 'border', kind: 19, insertText: 'border: ${1};', insertTextRules: 4 },
+  { label: 'border-radius', kind: 19, insertText: 'border-radius: ${1};', insertTextRules: 4 },
+  { label: 'text-align', kind: 19, insertText: 'text-align: ${1|left,center,right,justify|};', insertTextRules: 4 },
+  { label: 'text-decoration', kind: 19, insertText: 'text-decoration: ${1};', insertTextRules: 4 },
+  { label: 'flex', kind: 19, insertText: 'flex: ${1};', insertTextRules: 4 },
+  { label: 'flex-direction', kind: 19, insertText: 'flex-direction: ${1|row,column|};', insertTextRules: 4 },
+  { label: 'justify-content', kind: 19, insertText: 'justify-content: ${1|flex-start,center,flex-end,space-between,space-around|};', insertTextRules: 4 },
+  { label: 'align-items', kind: 19, insertText: 'align-items: ${1|flex-start,center,flex-end,stretch|};', insertTextRules: 4 },
+  { label: 'grid', kind: 19, insertText: 'grid: ${1};', insertTextRules: 4 },
+  { label: 'grid-template-columns', kind: 19, insertText: 'grid-template-columns: ${1};', insertTextRules: 4 },
+  { label: 'grid-template-rows', kind: 19, insertText: 'grid-template-rows: ${1};', insertTextRules: 4 },
+  { label: 'gap', kind: 19, insertText: 'gap: ${1};', insertTextRules: 4 },
+  { label: 'opacity', kind: 19, insertText: 'opacity: ${1};', insertTextRules: 4 },
+  { label: 'transform', kind: 19, insertText: 'transform: ${1};', insertTextRules: 4 },
+  { label: 'transition', kind: 19, insertText: 'transition: ${1};', insertTextRules: 4 },
+  { label: 'animation', kind: 19, insertText: 'animation: ${1};', insertTextRules: 4 },
+  { label: 'z-index', kind: 19, insertText: 'z-index: ${1};', insertTextRules: 4 },
+  { label: 'box-shadow', kind: 19, insertText: 'box-shadow: ${1};', insertTextRules: 4 },
+  { label: 'overflow', kind: 19, insertText: 'overflow: ${1|visible,hidden,scroll,auto|};', insertTextRules: 4 },
+  { label: 'cursor', kind: 19, insertText: 'cursor: ${1|pointer,default,text,move,not-allowed|};', insertTextRules: 4 }
+];
 
-// Register Python completion provider globally (only once)
-function registerPythonCompletionProvider() {
-  if (pythonCompletionProviderRegistered || !window.monaco) {
+const jsSuggestions = [
+  // JavaScript Keywords
+  { label: 'function', kind: 14, insertText: 'function ${1:name}(${2:params}) {\n  ${3}\n}', insertTextRules: 4 },
+  { label: 'const', kind: 14, insertText: 'const ${1:name} = ${2:value};', insertTextRules: 4 },
+  { label: 'let', kind: 14, insertText: 'let ${1:name} = ${2:value};', insertTextRules: 4 },
+  { label: 'var', kind: 14, insertText: 'var ${1:name} = ${2:value};', insertTextRules: 4 },
+  { label: 'if', kind: 14, insertText: 'if (${1:condition}) {\n  ${2}\n}', insertTextRules: 4 },
+  { label: 'else', kind: 14, insertText: 'else {\n  ${1}\n}', insertTextRules: 4 },
+  { label: 'else if', kind: 14, insertText: 'else if (${1:condition}) {\n  ${2}\n}', insertTextRules: 4 },
+  { label: 'for', kind: 14, insertText: 'for (let ${1:i} = 0; ${1:i} < ${2:length}; ${1:i}++) {\n  ${3}\n}', insertTextRules: 4 },
+  { label: 'while', kind: 14, insertText: 'while (${1:condition}) {\n  ${2}\n}', insertTextRules: 4 },
+  { label: 'return', kind: 14, insertText: 'return ${1:value};', insertTextRules: 4 },
+  { label: 'break', kind: 14, insertText: 'break;' },
+  { label: 'continue', kind: 14, insertText: 'continue;' },
+  { label: 'try', kind: 14, insertText: 'try {\n  ${1}\n} catch (${2:error}) {\n  ${3}\n}', insertTextRules: 4 },
+  { label: 'catch', kind: 14, insertText: 'catch (${1:error}) {\n  ${2}\n}', insertTextRules: 4 },
+  { label: 'finally', kind: 14, insertText: 'finally {\n  ${1}\n}', insertTextRules: 4 },
+  { label: 'throw', kind: 14, insertText: 'throw ${1:error};', insertTextRules: 4 },
+  
+  // JavaScript Constants
+  { label: 'true', kind: 21, insertText: 'true' },
+  { label: 'false', kind: 21, insertText: 'false' },
+  { label: 'null', kind: 21, insertText: 'null' },
+  { label: 'undefined', kind: 21, insertText: 'undefined' },
+  
+  // JavaScript Built-in Functions
+  { label: 'console.log', kind: 3, insertText: 'console.log(${1});', insertTextRules: 4 },
+  { label: 'console.error', kind: 3, insertText: 'console.error(${1});', insertTextRules: 4 },
+  { label: 'console.warn', kind: 3, insertText: 'console.warn(${1});', insertTextRules: 4 },
+  { label: 'alert', kind: 3, insertText: 'alert(${1});', insertTextRules: 4 },
+  { label: 'prompt', kind: 3, insertText: 'prompt(${1});', insertTextRules: 4 },
+  { label: 'confirm', kind: 3, insertText: 'confirm(${1});', insertTextRules: 4 },
+  { label: 'parseInt', kind: 3, insertText: 'parseInt(${1});', insertTextRules: 4 },
+  { label: 'parseFloat', kind: 3, insertText: 'parseFloat(${1});', insertTextRules: 4 },
+  { label: 'typeof', kind: 3, insertText: 'typeof ${1}', insertTextRules: 4 },
+  
+  // DOM Methods
+  { label: 'document.getElementById', kind: 3, insertText: 'document.getElementById(${1});', insertTextRules: 4 },
+  { label: 'document.querySelector', kind: 3, insertText: 'document.querySelector(${1});', insertTextRules: 4 },
+  { label: 'document.querySelectorAll', kind: 3, insertText: 'document.querySelectorAll(${1});', insertTextRules: 4 },
+  { label: 'document.createElement', kind: 3, insertText: 'document.createElement(${1});', insertTextRules: 4 },
+  { label: 'addEventListener', kind: 3, insertText: 'addEventListener(${1:event}, ${2:handler});', insertTextRules: 4 },
+  { label: 'removeEventListener', kind: 3, insertText: 'removeEventListener(${1:event}, ${2:handler});', insertTextRules: 4 },
+  { label: 'appendChild', kind: 3, insertText: 'appendChild(${1});', insertTextRules: 4 },
+  { label: 'removeChild', kind: 3, insertText: 'removeChild(${1});', insertTextRules: 4 },
+  { label: 'innerHTML', kind: 10, insertText: 'innerHTML = ${1};', insertTextRules: 4 },
+  { label: 'textContent', kind: 10, insertText: 'textContent = ${1};', insertTextRules: 4 },
+  { label: 'setAttribute', kind: 3, insertText: 'setAttribute(${1:name}, ${2:value});', insertTextRules: 4 },
+  { label: 'getAttribute', kind: 3, insertText: 'getAttribute(${1:name});', insertTextRules: 4 },
+  
+  // Array Methods
+  { label: 'push', kind: 3, insertText: 'push(${1});', insertTextRules: 4 },
+  { label: 'pop', kind: 3, insertText: 'pop();' },
+  { label: 'shift', kind: 3, insertText: 'shift();' },
+  { label: 'unshift', kind: 3, insertText: 'unshift(${1});', insertTextRules: 4 },
+  { label: 'map', kind: 3, insertText: 'map(${1:item} => ${2});', insertTextRules: 4 },
+  { label: 'filter', kind: 3, insertText: 'filter(${1:item} => ${2});', insertTextRules: 4 },
+  { label: 'forEach', kind: 3, insertText: 'forEach(${1:item} => ${2});', insertTextRules: 4 },
+  { label: 'find', kind: 3, insertText: 'find(${1:item} => ${2});', insertTextRules: 4 }
+];
+
+// Global flags to ensure completion providers are registered only once
+let htmlCompletionProviderRegistered = false;
+let cssCompletionProviderRegistered = false;
+let jsCompletionProviderRegistered = false;
+
+// Register completion providers for HTML, CSS, and JavaScript
+function registerWebCompletionProviders() {
+  if (!window.monaco) {
     return;
   }
   
-  monaco.languages.registerCompletionItemProvider('python', {
-    provideCompletionItems: function(model, position) {
-      console.log('Completion provider called at position:', position);
-      
-      const word = model.getWordUntilPosition(position);
-      const range = {
-        startLineNumber: position.lineNumber,
-        endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn
-      };
-
-      // Get the partial word being typed (convert to lowercase for case-insensitive matching)
-      const partialWord = word.word.toLowerCase();
-      console.log('Partial word:', partialWord);
-
-      // Quick return for empty input - show all suggestions
-      if (partialWord === '') {
-        console.log('Returning all suggestions');
-        return { 
-          suggestions: pythonSuggestions.map(s => ({...s, range}))
+  // Register HTML completion provider
+  if (!htmlCompletionProviderRegistered) {
+    monaco.languages.registerCompletionItemProvider('html', {
+      provideCompletionItems: function(model, position) {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn
         };
+
+        const partialWord = word.word.toLowerCase();
+        const filteredSuggestions = htmlSuggestions
+          .filter(suggestion => suggestion.label.toLowerCase().startsWith(partialWord))
+          .map(suggestion => ({...suggestion, range}));
+
+        return { suggestions: filteredSuggestions };
       }
+    });
+    htmlCompletionProviderRegistered = true;
+    console.log('HTML completion provider registered');
+  }
 
-      // Fast filtering using built-in array methods
-      const filteredSuggestions = pythonSuggestions
-        .filter(suggestion => suggestion.label.toLowerCase().startsWith(partialWord))
-        .map(suggestion => ({...suggestion, range}));
+  // Register CSS completion provider
+  if (!cssCompletionProviderRegistered) {
+    monaco.languages.registerCompletionItemProvider('css', {
+      provideCompletionItems: function(model, position) {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn
+        };
 
-      console.log('Filtered suggestions:', filteredSuggestions.length);
-      return { suggestions: filteredSuggestions };
-    }
-  });
-  
-  pythonCompletionProviderRegistered = true;
-  console.log('Python completion provider registered');
+        const partialWord = word.word.toLowerCase();
+        const filteredSuggestions = cssSuggestions
+          .filter(suggestion => suggestion.label.toLowerCase().startsWith(partialWord))
+          .map(suggestion => ({...suggestion, range}));
+
+        return { suggestions: filteredSuggestions };
+      }
+    });
+    cssCompletionProviderRegistered = true;
+    console.log('CSS completion provider registered');
+  }
+
+  // Register JavaScript completion provider
+  if (!jsCompletionProviderRegistered) {
+    monaco.languages.registerCompletionItemProvider('javascript', {
+      provideCompletionItems: function(model, position) {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn
+        };
+
+        const partialWord = word.word.toLowerCase();
+        const filteredSuggestions = jsSuggestions
+          .filter(suggestion => suggestion.label.toLowerCase().startsWith(partialWord))
+          .map(suggestion => ({...suggestion, range}));
+
+        return { suggestions: filteredSuggestions };
+      }
+    });
+    jsCompletionProviderRegistered = true;
+    console.log('JavaScript completion provider registered');
+  }
 }
 
 // --- Monaco Interop ---
 window.monacoInterop = {
-  init: async (containerId, initialCode, theme, fontSize, onContentChanged, language = 'python') => {
+  init: async (containerId, initialCode, theme, fontSize, onContentChanged, language = 'html') => {
     console.log('Monaco init called for:', containerId);
     try {
       // Check if DOM element exists
@@ -276,8 +348,8 @@ window.monacoInterop = {
       // Store the editor instance
       monacoEditors[containerId] = editor;
 
-      // Register the Python completion provider globally (only once)
-      registerPythonCompletionProvider();
+      // Register the web completion providers globally (only once)
+      registerWebCompletionProviders();
 
       // Prevent system keyboard on mobile devices
       const editorDomNode = editor.getDomNode();
@@ -359,98 +431,61 @@ window.monacoInterop = {
     const editor = monacoEditors[containerId];
     if (editor) {
       try {
-        // For Python, implement proper indentation that fixes bad indentation
         const model = editor.getModel();
-        const value = model.getValue();
+        const language = model.getLanguageId();
         
-        // Split into lines and fix indentation
-        const lines = value.split('\n');
-        const formattedLines = [];
-        let currentIndentLevel = 0;
-        
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          const trimmedLine = line.trim();
-          
-          // Skip empty lines - preserve them as is
-          if (trimmedLine === '') {
-            formattedLines.push('');
-            continue;
-          }
-          
-          // Check if this line should decrease indentation
-          if (trimmedLine.match(/^(except|elif|else|finally):/)) {
-            currentIndentLevel = Math.max(0, currentIndentLevel - 1);
-          }
-          
-          // Determine if this should be at top level (unindented)
-          // Top level: function definitions, class definitions, imports, top-level statements that don't follow a colon
-          let shouldBeTopLevel = false;
-          
-          if (i === 0) {
-            // First line is always top level
-            shouldBeTopLevel = true;
-          } else {
-            // Check if this looks like a top-level statement
-            if (trimmedLine.match(/^(def |class |import |from |if __name__|#|@)/)) {
-              shouldBeTopLevel = true;
-              currentIndentLevel = 0;
-            } else {
-              // Look back to see if we're following a function/class definition or other top-level code
-              let foundTopLevelContext = false;
-              for (let j = i - 1; j >= 0; j--) {
-                const prevLine = lines[j].trim();
-                if (prevLine === '') continue; // Skip empty lines
-                
-                // If previous line was a function/class definition, we should be indented
-                if (prevLine.match(/^(def |class |if |for |while |try:|with |except|elif|else:)/)) {
-                  foundTopLevelContext = false;
-                  break;
-                }
-                
-                // If previous line was clearly top-level, and this line doesn't look like it should be indented
-                if (prevLine.match(/^(import |from |#|@)/) || 
-                    (!prevLine.endsWith(':') && !prevLine.match(/^(def |class |if |for |while |try:|with )/))) {
-                  // Check if current line looks like it should be top-level
-                  if (trimmedLine.match(/^(print|[a-zA-Z_][a-zA-Z0-9_]*\s*=|[a-zA-Z_][a-zA-Z0-9_]*\()/)) {
-                    foundTopLevelContext = true;
-                  }
-                  break;
-                }
-                break;
+        // Enhanced formatting with language-specific options
+        switch (language) {
+          case 'html':
+            // For HTML, try Monaco's formatter first
+            editor.getAction('editor.action.formatDocument').run();
+            break;
+          case 'css':
+            // For CSS, use Monaco's built-in formatter
+            editor.getAction('editor.action.formatDocument').run();
+            break;
+          case 'javascript':
+          case 'typescript':
+            // For JS/TS, use Monaco's formatter with enhanced options
+            editor.getAction('editor.action.formatDocument').run();
+            break;
+          case 'python':
+            // For Python, basic indentation fix
+            const code = model.getValue();
+            const lines = code.split('\n');
+            let indentLevel = 0;
+            const formattedLines = lines.map(line => {
+              const trimmed = line.trim();
+              if (trimmed === '') return '';
+              
+              // Decrease indent for dedent keywords
+              if (trimmed.match(/^(except|elif|else|finally):/)) {
+                indentLevel = Math.max(0, indentLevel - 1);
               }
               
-              if (foundTopLevelContext) {
-                shouldBeTopLevel = true;
-                currentIndentLevel = 0;
+              const formatted = '  '.repeat(indentLevel) + trimmed;
+              
+              // Increase indent after colon (class, def, if, etc.)
+              if (trimmed.endsWith(':') && !trimmed.startsWith('#')) {
+                indentLevel++;
               }
-            }
-          }
-          
-          // Apply indentation
-          if (shouldBeTopLevel) {
-            formattedLines.push(trimmedLine);
-            currentIndentLevel = 0;
-          } else {
-            // Use current indent level
-            formattedLines.push('    '.repeat(currentIndentLevel) + trimmedLine);
-          }
-          
-          // Increase indent for lines ending with ':' (but not comments)
-          if (trimmedLine.endsWith(':') && !trimmedLine.trimStart().startsWith('#')) {
-            currentIndentLevel++;
-          }
+              
+              return formatted;
+            });
+            
+            model.setValue(formattedLines.join('\n'));
+            break;
+          default:
+            // For other languages, use Monaco's default formatter
+            editor.getAction('editor.action.formatDocument').run();
         }
-        
-        // Set the formatted code back to the editor
-        model.setValue(formattedLines.join('\n'));
       } catch (error) {
-        console.log('Python formatting failed, using Monaco default:', error);
-        // Fallback to Monaco's built-in formatter
+        console.log('Enhanced formatting failed, falling back to Monaco default:', error);
         try {
+          // Fallback to Monaco's default formatter
           editor.getAction('editor.action.formatDocument').run();
         } catch (fallbackError) {
-          console.log('Monaco formatter also failed:', fallbackError);
+          console.log('Monaco formatting also failed:', fallbackError);
         }
       }
     }

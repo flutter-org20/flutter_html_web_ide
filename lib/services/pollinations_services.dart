@@ -79,38 +79,38 @@ class PollinationsServices {
 
     // Add the original prompt
     variations.add(
-      'Using $basePrompt, generate a Python program, Keep the code simple, under 30 lines, without functions or classes, and return only raw Python code. Do not add anything else just give me the code. do not use markdown/backticks, without any inputs taken by the user.',
+      'Using $basePrompt, create a simple HTML webpage with CSS styling. Keep it clean, under 50 lines total, and return only raw HTML code with embedded CSS in <style> tags. Do not use markdown/backticks or external dependencies.',
     );
 
     if (count > 1) {
       // Add variations with different approaches
       variations.add(
-        'Write Python code demonstrating $basePrompt. The program should be different from standard loops, simple, under 30 lines, and no markdown or comments. Do not add anything else just give me the code,do not use markdown/backticks, without any inputs taken by the user.',
+        'Create an interactive webpage for $basePrompt using HTML, CSS, and JavaScript. Keep it simple, under 80 lines total, with inline CSS and JS. Return only raw HTML code with embedded styles and scripts. No markdown or comments.',
       );
     }
 
     if (count > 2) {
       // Add variation asking for alternative implementation
       variations.add(
-        'Generate a Python script for $basePrompt. Avoid functions or classes, do not use markdown/backticks, and keep code under 30 lines.Do not add anything else just give me the code, without any inputs taken by the user.',
+        'Build a modern webpage for $basePrompt using HTML5, CSS3, and vanilla JavaScript. Keep it responsive and under 100 lines total. Return only raw HTML with embedded CSS and JS. No markdown or external libraries.',
       );
     }
 
     if (count > 3) {
       // Add variation asking for optimized version
       variations.add(
-        'Provide a Python program using $basePrompt . Keep it beginner-friendly, under 30 lines, and output only plain Python code.Do not add anything else just give me the code, do not use markdown/backticks, without any inputs taken by the user.',
+        'Create a beginner-friendly webpage demonstrating $basePrompt. Use semantic HTML, basic CSS flexbox/grid, and simple JavaScript. Keep under 80 lines total. Output only plain HTML code with embedded styles and scripts.',
       );
     }
 
     if (count > 4) {
       // Add variations with more specific requests
       final additionalVariations = [
-        'Produce a Python snippet demonstrating $basePrompt in a different way from previous examples,. Keep the code short but medium-level, under 30 lines, with no comments or markdown. Do not add anything else just give me the code, without any inputs taken by the user.',
-        '$basePrompt. Include error handling.',
-        '$basePrompt. Add detailed comments.',
-        '$basePrompt. Use a different Python library or approach.',
-        '$basePrompt. Make it more beginner-friendly.',
+        'Design a single-page application for $basePrompt using HTML, CSS animations, and interactive JavaScript. Keep it visually appealing, under 120 lines total, with no external dependencies.',
+        '$basePrompt. Make it mobile-responsive with CSS media queries.',
+        '$basePrompt. Add hover effects and smooth transitions.',
+        '$basePrompt. Use CSS Grid or Flexbox for layout.',
+        '$basePrompt. Include form validation with JavaScript.',
       ];
 
       for (int i = 4; i < count && i - 4 < additionalVariations.length; i++) {
@@ -120,7 +120,9 @@ class PollinationsServices {
 
     // Fill remaining slots with the original prompt if needed
     while (variations.length < count) {
-      variations.add('$basePrompt. Version ${variations.length + 1}.');
+      variations.add(
+        '$basePrompt. Version ${variations.length + 1} - Create with HTML/CSS/JS.',
+      );
     }
 
     return variations.take(count).toList();

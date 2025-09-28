@@ -19,6 +19,7 @@ class KeyboardToolbar extends StatefulWidget {
   final Function(String, String)?
   onMenuSelection; // Updated to include editorId
   final String editorId; // Add editorId parameter
+  final String currentTab; // Add current tab parameter
 
   const KeyboardToolbar({
     super.key,
@@ -39,6 +40,7 @@ class KeyboardToolbar extends StatefulWidget {
     this.isPrettifying = false, // Default to false
     this.onMenuSelection, // Add this
     required this.editorId, // Add this as required
+    this.currentTab = 'html', // Default to html tab
   });
 
   @override
@@ -46,8 +48,29 @@ class KeyboardToolbar extends StatefulWidget {
 }
 
 class _KeyboardToolbarState extends State<KeyboardToolbar> {
-  int _currentMode = 0; // 0: letters, 1: digits, 2: special chars
+  int _currentMode = 0; // 0: letters, 1: digits, 2: web (HTML/CSS/JS)
   bool _isUpperCase = false;
+
+  // ScrollController instances for proper Scrollbar attachment
+  late ScrollController _abcScrollController;
+  late ScrollController _digitScrollController;
+  late ScrollController _webScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _abcScrollController = ScrollController();
+    _digitScrollController = ScrollController();
+    _webScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _abcScrollController.dispose();
+    _digitScrollController.dispose();
+    _webScrollController.dispose();
+    super.dispose();
+  }
 
   final List<List<String>> _letterRows = [
     ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
@@ -62,10 +85,55 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     ['"', "'", '@', '#', '%', '&', '|', '^', '?', '~'],
   ];
 
-  final List<List<String>> _specialRows = [
-    ['if', 'else', 'elif', 'for', 'while', 'def'],
-    ['class', 'import', 'from', 'return', 'print', 'len'],
-    ['True', 'False', 'None', 'and', 'or', 'not'],
+  // HTML-specific keyboard rows
+  final List<List<String>> _htmlRows = [
+    ['<div>', '<span>', '<p>', '<h1>', '<h2>', '<h3>'],
+    ['<a>', '<img>', '<input>', '<button>', '<form>', '<table>'],
+    ['<ul>', '<ol>', '<li>', '<head>', '<body>', '<html>'],
+    ['<tr>', '<td>', '<th>', '<script>', '<style>', '<meta>'],
+    ['class=', 'id=', 'src=', 'href=', 'alt=', 'title='],
+    ['type=', 'value=', 'onclick=', 'onload=', 'style=', 'data-'],
+  ];
+
+  // CSS-specific keyboard rows
+  final List<List<String>> _cssRows = [
+    ['color:', 'background:', 'font-size:', 'margin:', 'padding:', 'width:'],
+    ['height:', 'display:', 'position:', 'border:', 'flex:', 'grid:'],
+    ['top:', 'left:', 'right:', 'bottom:', 'z-index:', 'opacity:'],
+    [
+      'text-align:',
+      'font-weight:',
+      'line-height:',
+      'overflow:',
+      'cursor:',
+      'transform:',
+    ],
+    [
+      'justify-content:',
+      'align-items:',
+      'flex-direction:',
+      'gap:',
+      'border-radius:',
+      'box-shadow:',
+    ],
+    ['transition:', 'animation:', 'hover:', 'focus:', 'active:', 'before:'],
+  ];
+
+  // JS-specific keyboard rows
+  final List<List<String>> _jsRows = [
+    ['function', 'const', 'let', 'var', 'if', 'else'],
+    ['for', 'while', 'return', 'break', 'continue', 'try'],
+    ['catch', 'finally', 'true', 'false', 'null', 'undefined'],
+    ['console.log', 'document.', 'window.', 'alert()', 'prompt()', 'confirm()'],
+    [
+      'getElementById',
+      'querySelector',
+      'addEventListener',
+      'createElement',
+      'appendChild',
+      'innerHTML',
+    ],
+    ['textContent', 'className', 'style.', 'value', 'checked', 'disabled'],
   ];
 
   void _handleMenuSelection(String value) {
@@ -87,23 +155,54 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2D2D30),
-        border: const Border(top: BorderSide(color: Color(0xFF404040))),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Mode selector row
-          _buildModeSelector(),
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Ensure we have valid constraints to work with
+          final maxHeight =
+              constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : MediaQuery.of(context).size.height * 0.4;
+          final maxWidth =
+              constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : MediaQuery.of(context).size.width;
 
-          // Keyboard rows
-          _buildKeyboardRows(),
+          return Container(
+            constraints: BoxConstraints(
+              maxHeight: maxHeight,
+              maxWidth: maxWidth,
+              minHeight: 200, // Ensure minimum usable height
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2D2D30),
+              border: const Border(top: BorderSide(color: Color(0xFF404040))),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Mode selector row (fixed height)
+                _buildModeSelector(),
 
-          // Bottom action row
-          _buildActionRow(),
-        ],
+                // Keyboard rows (flexible height with constraints)
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight:
+                          maxHeight -
+                          120, // Reserve space for mode selector and action row
+                      minHeight: 100,
+                    ),
+                    child: _buildKeyboardRows(),
+                  ),
+                ),
+
+                // Bottom action row (fixed height)
+                _buildActionRow(),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -114,16 +213,13 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        clipBehavior: Clip.hardEdge,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             _buildModeButton('ABC', 0),
             const SizedBox(width: 8),
             _buildModeButton('123', 1),
             const SizedBox(width: 8),
-            _buildModeButton('PY', 2),
+            _buildModeButton('WEB', 2),
             const SizedBox(width: 8),
 
             // Prettify button
@@ -339,7 +435,7 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
         tooltip = '123 - Numbers Mode';
         break;
       case 2:
-        tooltip = 'PY - Python Symbols Mode';
+        tooltip = 'WEB - HTML/CSS/JS Symbols Mode';
         break;
       default:
         tooltip = label;
@@ -411,61 +507,182 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
   }
 
   Widget _buildKeyboardRows() {
-    List<List<String>> currentRows;
-    switch (_currentMode) {
-      case 1:
-        currentRows = _digitRows;
-        break;
-      case 2:
-        currentRows = _specialRows;
-        break;
-      default:
-        currentRows = _letterRows;
-    }
+    // Calculate the intrinsic height needed for ABC keyboard (3 rows + padding)
+    const double keyHeight = 35.0;
+    const double verticalPadding =
+        4.0; // 2 * 2 (top and bottom padding per row)
+    const double abcKeyboardHeight =
+        (keyHeight + verticalPadding) * 3; // 3 rows for ABC
 
-    return Column(
-      children: currentRows.map((row) => _buildKeyboardRow(row)).toList(),
-    );
+    switch (_currentMode) {
+      case 1: // 123 mode - constrained to ABC size with scrolling
+        return SizedBox(
+          height: abcKeyboardHeight,
+          child: _build123KeyboardWithScroll(),
+        );
+      case 2: // WEB mode - constrained to ABC size with scrolling
+        return SizedBox(
+          height: abcKeyboardHeight,
+          child: _buildWebKeyboardWithSections(),
+        );
+      default: // ABC mode - natural size (our reference size)
+        return _buildABCKeyboardWithScroll();
+    }
   }
 
-  Widget _buildKeyboardRow(List<String> keys) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: keys.map((key) => _buildKey(key)).toList(),
+  Widget _buildWebKeyboardWithSections() {
+    return Scrollbar(
+      controller: _webScrollController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _webScrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildLanguageSection('HTML', _htmlRows, Colors.orange),
+            const SizedBox(height: 8),
+            _buildLanguageSection('CSS', _cssRows, Colors.blue),
+            const SizedBox(height: 8),
+            _buildLanguageSection('JS', _jsRows, Colors.green),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildKey(String key) {
+  Widget _buildLanguageSection(
+    String title,
+    List<List<String>> rows,
+    Color color,
+  ) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(7),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(_getIconForLanguage(title), size: 14, color: color),
+                const SizedBox(width: 4),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: Column(
+              children:
+                  rows.map((row) => _buildSystematicKeyboardRow(row)).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getIconForLanguage(String language) {
+    switch (language) {
+      case 'HTML':
+        return Icons.language;
+      case 'CSS':
+        return Icons.palette;
+      case 'JS':
+        return Icons.code;
+      default:
+        return Icons.keyboard;
+    }
+  }
+
+  Widget _buildABCKeyboardWithScroll() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children:
+          _letterRows.map((row) => _buildSystematicKeyboardRow(row)).toList(),
+    );
+  }
+
+  Widget _build123KeyboardWithScroll() {
+    return Scrollbar(
+      controller: _digitScrollController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _digitScrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children:
+              _digitRows
+                  .map((row) => _buildSystematicKeyboardRow(row))
+                  .toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSystematicKeyboardRow(List<String> keys) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children:
+            keys
+                .map(
+                  (key) => Expanded(
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 1),
+                      child: _buildSystematicKey(key),
+                    ),
+                  ),
+                )
+                .toList(),
+      ),
+    );
+  }
+
+  Widget _buildSystematicKey(String key) {
     String displayKey = key;
     if (_currentMode == 0 && _isUpperCase) {
       displayKey = key.toUpperCase();
     }
 
-    return Expanded(
+    return GestureDetector(
+      onTap: () => widget.onKeyPress(displayKey),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 1),
-        child: GestureDetector(
-          onTap: () => widget.onKeyPress(displayKey),
-          child: Container(
-            height: 35,
-            decoration: BoxDecoration(
-              color: const Color(0xFF3C3C3C),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: const Color(0xFF505050)),
+        height: 35,
+        decoration: BoxDecoration(
+          color: const Color(0xFF3C3C3C),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: const Color(0xFF505050)),
+        ),
+        child: Center(
+          child: Text(
+            displayKey,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
-            child: Center(
-              child: Text(
-                displayKey,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),

@@ -498,6 +498,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  String _getTabNameForTabType(TabType tab) {
+    switch (tab) {
+      case TabType.html:
+        return 'html';
+      case TabType.css:
+        return 'css';
+      case TabType.js:
+        return 'js';
+    }
+  }
+
   void _switchTab(String editorId, TabType newTab) {
     if (_currentTabs[editorId] == newTab) return;
 
@@ -526,6 +537,16 @@ document.addEventListener('DOMContentLoaded', function() {
         interop.setMonacoLanguage(editorId, language);
         interop.setMonacoValue(editorId, newContent);
         _lastText[editorId] = newContent;
+
+        // Trigger autocomplete to show new language-specific suggestions
+        final isAutocompleteEnabled =
+            _autocompleteEnabledCache[editorId] ?? true;
+        if (isAutocompleteEnabled) {
+          Future.delayed(const Duration(milliseconds: 200), () {
+            interop.triggerAutocomplete(editorId);
+          });
+        }
+
         print(
           'Switched to $newTab tab for $editorId with content length: ${newContent.length}',
         );
@@ -1147,6 +1168,9 @@ $jsContent
   }
 
   Widget _buildKeyboard(int editorIndex) {
+    final currentTab = _currentTabs[_monacoDivIds[editorIndex]] ?? TabType.html;
+    final currentTabName = _getTabNameForTabType(currentTab);
+
     return KeyboardToolbar(
       key: ValueKey('keyboard-${_monacoDivIds[editorIndex]}'),
       onKeyPress: (key) => _handleKeyPress(key, _monacoDivIds[editorIndex]),
@@ -1168,6 +1192,7 @@ $jsContent
       isPrettifying: _isPrettifyingCache[_monacoDivIds[editorIndex]] ?? false,
       onMenuSelection: _handleMenuSelection,
       editorId: _monacoDivIds[editorIndex],
+      currentTab: currentTabName,
     );
   }
 
@@ -1209,7 +1234,7 @@ $jsContent
                   ),
                   decoration: InputDecoration(
                     hintText:
-                        'Enter your prompt here (e.g., "Write a Python function to sort a list")',
+                        'Enter your prompt here (e.g., "Create a responsive navbar with HTML and CSS")',
                     hintStyle: TextStyle(color: Colors.grey[500], fontSize: 16),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),

@@ -3,7 +3,7 @@ import 'dart:convert';
 import '../models/prompt_history.dart';
 
 class PromptHistoryService {
-  static const String _storageKey = 'python_ide_prompt_history';
+  static const String _storageKey = 'web_ide_prompt_history';
   static const int _maxHistoryItems = 100;
 
   /// Save a prompt to history with generated responses

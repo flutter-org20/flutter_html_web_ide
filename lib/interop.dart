@@ -3,7 +3,7 @@ import 'dart:js_interop';
 
 // --- Callback Type Definitions for your Dart code ---
 typedef ContentChangedCallback = void Function(String content);
-typedef PythonOutputCallback = void Function(String message);
+typedef WebOutputCallback = void Function(String message);
 
 // --- Monaco Interop Bindings ---
 
@@ -14,7 +14,7 @@ external JSPromise _initMonaco(
   String theme,
   double fontSize,
   JSFunction onContentChanged, [
-  String language = 'python',
+  String language = 'html',
 ]);
 
 // Public wrapper that handles the Dart-to-JS function conversion for you
@@ -24,7 +24,7 @@ Future<void> initMonaco(
   String theme,
   double fontSize,
   ContentChangedCallback onContentChanged, [
-  String language = 'python',
+  String language = 'html',
 ]) async {
   try {
     // Add a check to ensure monacoInterop is available
@@ -88,7 +88,7 @@ external void copyMonacoSelection(String containerId);
 external JSPromise _initPyodide(JSFunction onOutput);
 
 // Public wrapper that handles the Promise and function conversion
-Future<String> initPyodide(PythonOutputCallback onOutput) {
+Future<String> initPyodide(WebOutputCallback onOutput) {
   return _initPyodide(
     onOutput.toJS,
   ).toDart.then((value) => (value as JSString).toDart);
