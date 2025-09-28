@@ -5,7 +5,6 @@ import 'package:flutter_html_web_ide/widgets/keyboard_toolbar.dart';
 import 'dart:html' as html;
 import 'dart:ui_web' as ui_web;
 import 'interop.dart' as interop;
-import 'utils/code_examples.dart';
 import 'utils/code_history.dart';
 import 'dart:math' as math;
 import '../services/pollinations_services.dart';
@@ -105,6 +104,9 @@ class _IDEScreenState extends State<IDEScreen> {
 
   // History management
   bool _showHistoryPanel = false;
+
+  // Editor selection for code generation
+  int _selectedEditorIndex = 0;
 
   @override
   void initState() {
@@ -870,40 +872,6 @@ $jsContent
     setState(() {}); // Update UI
   }
 
-  void _loadExample(String exampleName, [String? editorId]) {
-    final exampleCode = CodeExamples.examples[exampleName];
-    if (exampleCode != null) {
-      if (editorId != null) {
-        interop.setMonacoValue(editorId, exampleCode);
-        _lastText[editorId] = exampleCode;
-        _codeHistories[editorId]?.clear();
-        _codeHistories[editorId]?.addState(exampleCode);
-        // Update tab file names based on content type
-        final currentTab = _currentTabs[editorId] ?? TabType.html;
-        final extension = _getFileExtensionForTab(currentTab);
-        final fileName =
-            '${exampleName.toLowerCase().replaceAll(' ', '_')}$extension';
-        setState(() => _tabFileNames[editorId]![currentTab] = fileName);
-      } else {
-        // Load in all editors
-        for (final id in _monacoDivIds) {
-          interop.setMonacoValue(id, exampleCode);
-          _lastText[id] = exampleCode;
-          _codeHistories[id]?.clear();
-          _codeHistories[id]?.addState(exampleCode);
-          // Update current tab content and filename
-          final currentTab = _currentTabs[id] ?? TabType.html;
-          final extension = _getFileExtensionForTab(currentTab);
-          final fileName =
-              '${exampleName.toLowerCase().replaceAll(' ', '_')}$extension';
-          _tabContents[id]![currentTab] = exampleCode;
-          _tabFileNames[id]![currentTab] = fileName;
-        }
-        setState(() {});
-      }
-    }
-  }
-
   // void _clearEditor(String? editorId) {
   //   showDialog(
   //     context: context,
@@ -1266,6 +1234,8 @@ $jsContent
                 ),
               ),
               const SizedBox(width: 8),
+              _buildEditorSelectionDropdown(),
+              const SizedBox(width: 8),
               IconButton(
                 onPressed: _showHistory,
                 style: IconButton.styleFrom(
@@ -1328,12 +1298,55 @@ $jsContent
     );
   }
 
+  Widget _buildEditorSelectionDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey[400]!),
+        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: _selectedEditorIndex,
+          icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
+          items: List.generate(numberOfStudents, (index) {
+            return DropdownMenuItem<int>(
+              value: index,
+              child: Text(
+                'Editor ${index + 1}',
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            );
+          }),
+          onChanged: (int? newValue) {
+            if (newValue != null) {
+              setState(() {
+                _selectedEditorIndex = newValue;
+              });
+            }
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _generateTextFromPrompt() async {
     final prompt = _promptController.text.trim();
 
     // Validate input
     if (prompt.isEmpty) {
       _showErrorMessage('Please enter a prompt');
+      return;
+    }
+
+    // Validate selected editor index
+    if (_selectedEditorIndex >= numberOfStudents) {
+      _showErrorMessage('Selected editor is not available');
       return;
     }
 
@@ -1344,49 +1357,59 @@ $jsContent
     });
 
     try {
-      // Generate multiple samples for different editors
-      final int numEditors = numberOfStudents;
-      final responses = await PollinationsServices.generateMultipleSamples(
-        prompt: prompt,
-        count: numEditors,
-      );
+      print('Generating text for prompt: $prompt');
+      print('Target editor index: $_selectedEditorIndex');
 
-      final List<String> generatedSamples = [];
-      bool anySuccess = false;
+      // Test connection first
+      print('Testing API connection...');
+      final isConnected = await PollinationsServices.testConnection();
+      if (!isConnected) {
+        setState(() {
+          _errorMessage =
+              'Unable to connect to AI service. This might be due to:\n'
+              '• Network connectivity issues\n'
+              '• CORS restrictions in web browser\n'
+              '• AI service temporarily unavailable\n'
+              'Please check browser console for details.';
+          _isGenerating = false;
+        });
+        return;
+      }
+      print('Connection test passed');
 
-      // Check responses and collect successful ones
-      for (int i = 0; i < responses.length && i < numEditors; i++) {
-        final response = responses[i];
-        if (response.success && response.text.isNotEmpty) {
-          generatedSamples.add(response.text);
-          anySuccess = true;
+      // Generate code for the selected editor only
+      final response = await PollinationsServices.generateText(prompt);
 
-          // Set the generated code in the corresponding editor
-          final editorId = _monacoDivIds[i];
-          final currentTab = _currentTabs[editorId] ?? TabType.html;
-          interop.setMonacoValue(editorId, response.text);
-          _lastText[editorId] = response.text;
-          _codeHistories[editorId]?.clear();
-          _codeHistories[editorId]?.addState(response.text);
-
-          // Update tab content and filename to reflect the prompt
-          _tabContents[editorId]![currentTab] = response.text;
-          final extension = _getFileExtensionForTab(currentTab);
-          final fileName = '${_sanitizeFilename(prompt)}_v${i + 1}$extension';
-          setState(() => _tabFileNames[editorId]![currentTab] = fileName);
-        } else {
-          // If generation failed for this editor, add error message
-          generatedSamples.add(
-            '# Error generating code: ${response.error ?? 'Unknown error'}',
-          );
-        }
+      print('Response received - Success: ${response.success}');
+      if (!response.success) {
+        print('Error from API: ${response.error}');
       }
 
-      if (anySuccess) {
-        // Save to history
+      if (response.success && response.text.isNotEmpty) {
+        print('Generated text length: ${response.text.length}');
+
+        // Set the generated code in the selected editor
+        final editorId = _monacoDivIds[_selectedEditorIndex];
+        final currentTab = _currentTabs[editorId] ?? TabType.html;
+
+        print('Setting text in editor: $editorId, tab: $currentTab');
+
+        interop.setMonacoValue(editorId, response.text);
+        _lastText[editorId] = response.text;
+        _codeHistories[editorId]?.clear();
+        _codeHistories[editorId]?.addState(response.text);
+
+        // Update tab content and filename to reflect the prompt
+        _tabContents[editorId]![currentTab] = response.text;
+        final extension = _getFileExtensionForTab(currentTab);
+        final fileName =
+            '${_sanitizeFilename(prompt)}_editor_${_selectedEditorIndex + 1}$extension';
+        setState(() => _tabFileNames[editorId]![currentTab] = fileName);
+
+        // Save to history with single response
         await PromptHistoryService.savePrompt(
           prompt: prompt,
-          responses: generatedSamples,
+          responses: [response.text],
         );
 
         setState(() {
@@ -1398,16 +1421,51 @@ $jsContent
         _promptController.clear();
 
         // Show success feedback
-        _showSuccessMessage('Code samples generated and loaded into editors!');
+        _showSuccessMessage(
+          'Code generated and loaded into Editor ${_selectedEditorIndex + 1}!',
+        );
       } else {
+        String errorMsg;
+        if (!response.success && response.error != null) {
+          if (response.error!.contains('Network Error')) {
+            errorMsg =
+                'Connection failed. Please check your internet connection and try again.';
+          } else if (response.error!.contains('API Error')) {
+            errorMsg =
+                'AI service temporarily unavailable. Please try again in a few moments.';
+          } else {
+            errorMsg = 'AI Service Error: ${response.error}';
+          }
+        } else if (response.text.isEmpty) {
+          errorMsg =
+              'AI service returned empty response. Try rephrasing your prompt.';
+        } else {
+          errorMsg = 'Unknown error from AI service. Please try again.';
+        }
+
+        print('Setting error message: $errorMsg');
         setState(() {
-          _errorMessage = 'Failed to generate any code samples';
+          _errorMessage = errorMsg;
           _isGenerating = false;
         });
       }
     } catch (e) {
+      print('Exception in _generateTextFromPrompt: $e');
+      String userFriendlyError;
+      if (e.toString().contains('SocketException') ||
+          e.toString().contains('TimeoutException')) {
+        userFriendlyError =
+            'Connection timeout. Please check your internet connection and try again.';
+      } else if (e.toString().contains('FormatException')) {
+        userFriendlyError =
+            'Invalid response format from AI service. Please try again.';
+      } else {
+        userFriendlyError =
+            'Unexpected error occurred. Please try again or check your connection.';
+      }
+
       setState(() {
-        _errorMessage = 'Unexpected error: ${e.toString()}';
+        _errorMessage = userFriendlyError;
         _isGenerating = false;
       });
     }
@@ -1697,6 +1755,10 @@ $jsContent
             onSelected: (value) async {
               setState(() {
                 numberOfStudents = value;
+                // Reset selected editor index if it's out of range
+                if (_selectedEditorIndex >= numberOfStudents) {
+                  _selectedEditorIndex = 0;
+                }
               });
               _assignRollNumbers();
               await _reinitializeEditors();
@@ -1770,31 +1832,6 @@ $jsContent
                 );
               }
             },
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.school),
-            tooltip: 'Load Example',
-            onSelected: (value) {
-              if (value != 'header') _loadExample(value);
-            },
-            itemBuilder:
-                (context) => [
-                  const PopupMenuItem<String>(
-                    value: 'header',
-                    enabled: false,
-                    child: Text(
-                      'Code Examples',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                  ...CodeExamples.examples.keys.map(
-                    (example) => PopupMenuItem<String>(
-                      value: example,
-                      child: Text(example),
-                    ),
-                  ),
-                ],
           ),
           IconButton(
             icon: const Icon(Icons.save),
