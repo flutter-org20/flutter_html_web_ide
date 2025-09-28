@@ -281,7 +281,7 @@ window.monacoInterop = {
         await loadMonaco();
       }
 
-      const editor = monaco.editor.create(container, language, {
+      const editor = monaco.editor.create(container, {
         value: initialCode,
         language: language,
         theme: theme,
@@ -350,6 +350,20 @@ window.monacoInterop = {
 
       // Register the web completion providers globally (only once)
       registerWebCompletionProviders();
+
+      // Force a layout and refresh to ensure syntax highlighting appears immediately
+      setTimeout(() => {
+        if (editor) {
+          editor.layout();
+          const model = editor.getModel();
+          if (model) {
+            // Force re-tokenization to ensure syntax highlighting appears
+            monaco.editor.setModelLanguage(model, model.getLanguageId());
+            // Trigger a refresh of the editor
+            editor.trigger('', 'editor.action.refresh', {});
+          }
+        }
+      }, 100);
 
       // Prevent system keyboard on mobile devices
       const editorDomNode = editor.getDomNode();

@@ -434,6 +434,7 @@ document.addEventListener('DOMContentLoaded', function() {
         final element = html.document.getElementById(id);
         if (element != null &&
             !element.hasAttribute('data-monaco-initialized')) {
+          print('Initializing Monaco editor for $id with language: $language');
           await interop.initMonaco(
             id,
             initialCode,
@@ -445,7 +446,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           // Mark element as initialized
           element.setAttribute('data-monaco-initialized', 'true');
-          print('Editor initialized: $id');
+          print('Editor initialized: $id with language: $language');
 
           // Ensure content is set after initialization
           await Future.delayed(const Duration(milliseconds: 100));

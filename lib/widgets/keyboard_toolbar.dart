@@ -62,6 +62,20 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     _abcScrollController = ScrollController();
     _digitScrollController = ScrollController();
     _webScrollController = ScrollController();
+
+    // Add post-frame callback to ensure scroll controllers are properly attached
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshScrollControllers();
+    });
+  }
+
+  void _refreshScrollControllers() {
+    // Force refresh of scroll controllers to fix inconsistent scrolling
+    if (mounted) {
+      setState(() {
+        // Trigger rebuild with properly initialized controllers
+      });
+    }
   }
 
   @override
@@ -517,16 +531,21 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     switch (_currentMode) {
       case 1: // 123 mode - constrained to ABC size with scrolling
         return SizedBox(
+          key: const ValueKey('keyboard_123'), // Add key for proper rebuilding
           height: abcKeyboardHeight,
           child: _build123KeyboardWithScroll(),
         );
       case 2: // WEB mode - constrained to ABC size with scrolling
         return SizedBox(
+          key: const ValueKey('keyboard_web'), // Add key for proper rebuilding
           height: abcKeyboardHeight,
           child: _buildWebKeyboardWithSections(),
         );
       default: // ABC mode - natural size (our reference size)
-        return _buildABCKeyboardWithScroll();
+        return Container(
+          key: const ValueKey('keyboard_abc'), // Add key for proper rebuilding
+          child: _buildABCKeyboardWithScroll(),
+        );
     }
   }
 
@@ -534,9 +553,11 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     return Scrollbar(
       controller: _webScrollController,
       thumbVisibility: true,
+      interactive: true,
       child: SingleChildScrollView(
         controller: _webScrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics:
+            const ClampingScrollPhysics(), // Changed from AlwaysScrollableScrollPhysics
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -625,9 +646,11 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     return Scrollbar(
       controller: _digitScrollController,
       thumbVisibility: true,
+      interactive: true,
       child: SingleChildScrollView(
         controller: _digitScrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics:
+            const ClampingScrollPhysics(), // Changed from AlwaysScrollableScrollPhysics
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children:
@@ -711,7 +734,10 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
+        physics: const ClampingScrollPhysics(), // Add consistent physics
         child: Row(
+          mainAxisSize:
+              MainAxisSize.min, // Add this to prevent unnecessary expansion
           children: [
             // Arrow Navigation Section
             SizedBox(
