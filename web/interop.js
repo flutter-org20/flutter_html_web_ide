@@ -194,7 +194,7 @@ function registerPythonCompletionProvider() {
 
 // --- Monaco Interop ---
 window.monacoInterop = {
-  init: async (containerId, initialCode, theme, fontSize, onContentChanged) => {
+  init: async (containerId, initialCode, theme, fontSize, onContentChanged, language = 'python') => {
     console.log('Monaco init called for:', containerId);
     try {
       // Check if DOM element exists
@@ -209,9 +209,9 @@ window.monacoInterop = {
         await loadMonaco();
       }
 
-      const editor = monaco.editor.create(container, {
+      const editor = monaco.editor.create(container, language, {
         value: initialCode,
-        language: 'python',
+        language: language,
         theme: theme,
         fontSize: fontSize,
         automaticLayout: true,
@@ -543,6 +543,27 @@ window.monacoInterop = {
     const editor = monacoEditors[containerId];
     if (editor) {
       editor.trigger('keyboard', 'editor.action.triggerSuggest', {});
+    }
+  },
+
+  // Set language for Monaco editor
+  setLanguage: (containerId, language) => {
+    console.log(`Setting language to ${language} for ${containerId}`);
+    const editor = monacoEditors[containerId];
+    if (editor && monaco) {
+      try {
+        const model = editor.getModel();
+        if (model) {
+          monaco.editor.setModelLanguage(model, language);
+          console.log(`Language successfully set to ${language} for ${containerId}`);
+        } else {
+          console.warn(`No model found for editor ${containerId}`);
+        }
+      } catch (error) {
+        console.error(`Error setting language for ${containerId}:`, error);
+      }
+    } else {
+      console.warn(`Editor ${containerId} or Monaco not available`);
     }
   }
 };

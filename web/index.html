@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta content="IE=Edge" http-equiv="X-UA-Compatible">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Python Web IDE</title>
+    <title>HTML Web IDE</title>
     <style>
         body {
             margin: 0;
@@ -15,8 +15,62 @@
     </style>
 </head>
 <body>
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.41.0/min/vs/loader.min.js"></script>
+    <!-- Load Monaco Editor first -->
+    <script src="https://unpkg.com/monaco-editor@0.41.0/min/vs/loader.js"></script>
+    <script>
+        // Initialize Monaco Editor loader with proper error handling
+        window.monacoReady = new Promise((resolve, reject) => {
+            if (typeof require === 'undefined') {
+                reject(new Error('Monaco loader failed to load'));
+                return;
+            }
+            
+            require.config({ 
+                paths: { 
+                    'vs': 'https://unpkg.com/monaco-editor@0.41.0/min/vs'
+                },
+                'vs/nls': {
+                    availableLanguages: {
+                        '*': 'en'
+                    }
+                }
+            });
+
+            require(['vs/editor/editor.main'], function() {
+                console.log('Monaco Editor loaded successfully');
+                resolve(window.monaco);
+            }, function(err) {
+                console.error('Failed to load Monaco Editor:', err);
+                reject(err);
+            });
+        });
+
+        // Pre-define monacoInterop object to prevent NoSuchMethodError
+        window.monacoInterop = {
+            setLanguage: function(editorId, language) {
+                console.log('setLanguage called for:', editorId, 'with language:', language);
+                // This will be properly implemented after Monaco loads
+                if (window.monacoEditors && window.monacoEditors[editorId]) {
+                    try {
+                        const model = window.monacoEditors[editorId].getModel();
+                        if (model && window.monaco) {
+                            window.monaco.editor.setModelLanguage(model, language);
+                            console.log('Language set successfully to:', language);
+                        }
+                    } catch (error) {
+                        console.error('Error setting language:', error);
+                    }
+                } else {
+                    console.warn('Editor not found or Monaco not ready:', editorId);
+                }
+            }
+        };
+    </script>
+    
+    <!-- Load Pyodide -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js" onerror="console.error('Failed to load Pyodide')"></script>
+    
+    <!-- Load our interop script -->
     <script src="interop.js"></script>
 
     <script>

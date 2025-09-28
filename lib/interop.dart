@@ -13,8 +13,9 @@ external JSPromise _initMonaco(
   String initialCode,
   String theme,
   double fontSize,
-  JSFunction onContentChanged,
-);
+  JSFunction onContentChanged, [
+  String language = 'python',
+]);
 
 // Public wrapper that handles the Dart-to-JS function conversion for you
 Future<void> initMonaco(
@@ -22,8 +23,9 @@ Future<void> initMonaco(
   String initialCode,
   String theme,
   double fontSize,
-  ContentChangedCallback onContentChanged,
-) async {
+  ContentChangedCallback onContentChanged, [
+  String language = 'python',
+]) async {
   try {
     // Add a check to ensure monacoInterop is available
     if (!_isMonacoInteropAvailable()) {
@@ -38,6 +40,7 @@ Future<void> initMonaco(
       theme,
       fontSize,
       onContentChanged.toJS,
+      language,
     ).toDart;
   } catch (e) {
     print('Error initializing Monaco Editor: $e');
@@ -99,6 +102,13 @@ Future<String?> runPyodideCode(String code) {
   return _runPyodideCode(code).toDart.then((value) {
     return (value as JSString?)?.toDart;
   });
+}
+
+@JS('monacoInterop.setLanguage')
+external void _setMonacoLanguage(String containerId, String language);
+
+void setMonacoLanguage(String containerId, String language) {
+  _setMonacoLanguage(containerId, language);
 }
 
 @JS('destroyMonacoEditor')

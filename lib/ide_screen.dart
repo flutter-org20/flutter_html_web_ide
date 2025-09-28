@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:python_web_ide/widgets/keyboard_toolbar.dart';
+import 'package:flutter_html_web_ide/widgets/keyboard_toolbar.dart';
 import 'dart:html' as html;
 import 'dart:ui_web' as ui_web;
 import 'interop.dart' as interop;
@@ -14,6 +15,8 @@ import '../models/prompt_history.dart';
 
 enum KeyboardPosition { aboveEditor, betweenEditorOutput, belowOutput }
 
+enum TabType { html, css, js }
+
 class IDEScreen extends StatefulWidget {
   const IDEScreen({super.key});
 
@@ -22,19 +25,15 @@ class IDEScreen extends StatefulWidget {
 }
 
 class _IDEScreenState extends State<IDEScreen> {
-  String _output = '';
   final Map<String, String> _editorOutputs = {};
-  bool _isLoading = false;
-  final double _editorHeightRatio = 0.6;
-  bool _pyodideLoaded = false;
+  final bool _isLoading = false;
+  final double _editorHeightRatio = 0.45;
   final double _fontSize = 14.0;
   final Map<String, String> _lastText = {};
   final Map<String, CodeHistory> _codeHistories = {};
   String _currentTheme = 'vs-dark';
-  final Map<String, String> _currentFileNames = {};
   bool _preventHistoryUpdate = false;
 
-  String? _currentRunningEditorId;
   int numberOfStudents = 4;
   final List<String> _monacoElementIds = [
     'monaco-editor-container-1',
@@ -42,6 +41,14 @@ class _IDEScreenState extends State<IDEScreen> {
     'monaco-editor-container-3',
     'monaco-editor-container-4',
   ];
+
+  // Tab system for HTML/CSS/JS
+
+  final Map<String, TabType> _currentTabs = {}; // Current active tab per editor
+  final Map<String, Map<TabType, String>> _tabContents =
+      {}; // Content for each tab per editor
+  final Map<String, Map<TabType, String>> _tabFileNames =
+      {}; // Filenames for each tab per editor
 
   final List<String> _monacoDivIds = [
     'monaco-editor-div-1',
@@ -64,10 +71,26 @@ class _IDEScreenState extends State<IDEScreen> {
   final math.Random _random = math.Random();
 
   // Keyboard positioning - now per editor
-  final Map<String, KeyboardPosition> _keyboardPositions = {};
+  final Map<String, KeyboardPosition?> _keyboardPositions = {};
 
   // Output expansion state - per editor
   final Map<String, bool> _outputExpanded = {};
+
+  // Live preview management
+  final Map<String, bool> _livePreviewEnabled = {};
+  final Map<String, Timer?> _previewUpdateTimers = {};
+  final List<String> _previewElementIds = [
+    'html-preview-1',
+    'html-preview-2',
+    'html-preview-3',
+    'html-preview-4',
+  ];
+
+  // UI layout reorganization - expandable preview with output toggle
+  final Map<String, bool> _previewExpanded =
+      {}; // Controls preview section expansion
+  final Map<String, bool> _showOutputInPreview =
+      {}; // Toggle between preview and output in bottom section
 
   // Prevent multiple simultaneous Monaco initialization attempts
   bool _isInitializingMonaco = false;
@@ -89,10 +112,127 @@ class _IDEScreenState extends State<IDEScreen> {
 
     // Initialize state for each editor
     for (final id in _monacoDivIds) {
+      _livePreviewEnabled[id] = true;
+      _previewUpdateTimers[id] = null;
       _codeHistories[id] = CodeHistory();
       _lastText[id] = '';
-      _currentFileNames[id] = 'untitled.py';
       _editorOutputs[id] = '';
+      _currentTabs[id] = TabType.html; // Default to HTML tab
+      _tabContents[id] = {
+        TabType.html: '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Web Page</title>
+</head>
+<body>
+    <div class="container">
+        <h1 id="main-title">Welcome to HTML Web IDE!</h1>
+        <p class="description">Edit HTML, CSS, and JavaScript in the tabs above.</p>
+        <button id="change-btn" class="btn">Click me!</button>
+        <div id="output-area"></div>
+    </div>
+</body>
+</html>''',
+
+        TabType.css: '''/* CSS Styles for your webpage */
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    font-family: 'Arial', sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    color: white;
+}
+
+#main-title {
+    text-align: center;
+    color: #fff;
+    font-size: 2.5em;
+    margin-bottom: 20px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.description {
+    text-align: center;
+    font-size: 1.2em;
+    margin-bottom: 30px;
+    opacity: 0.9;
+}
+
+.btn {
+    display: block;
+    margin: 20px auto;
+    padding: 12px 24px;
+    background: #ff6b6b;
+    color: white;
+    border: none;
+    border-radius: 25px;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn:hover {
+    background: #ff5252;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+#output-area {
+    margin-top: 30px;
+    padding: 20px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 10px;
+    text-align: center;
+    min-height: 50px;
+}''',
+
+        TabType.js: '''// JavaScript for interactive functionality
+console.log("🚀 HTML Web IDE is ready!");
+
+// Wait for DOM to load
+document.addEventListener('DOMContentLoaded', function() {
+    const button = document.getElementById('change-btn');
+    const title = document.getElementById('main-title');
+    const outputArea = document.getElementById('output-area');
+    
+    let clickCount = 0;
+    const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57'];
+    
+    button.addEventListener('click', function() {
+        clickCount++;
+        
+        // Change title text
+        title.textContent = `You clicked ` + clickCount + ` times! 🎉`;
+        
+        // Change button color
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        button.style.backgroundColor = randomColor;
+        
+        // Add message to output area
+        outputArea.innerHTML = `
+            <h3>Button clicked ` + clickCount + ` times!</h3>
+            <p>Try editing the code in different tabs to see live changes.</p>
+            <small>Last clicked: ` + new Date().toLocaleTimeString() + `</small>
+        `;
+        
+        console.log(`Button clicked ` + clickCount + ` times at ` + new Date() + ``);
+    });
+    
+    // Add some dynamic content
+    setTimeout(() => {
+        outputArea.innerHTML = '<p>✨ Ready for interaction! Click the button above.</p>';
+    }, 1000);
+});''',
+      };
+      _tabFileNames[id] = {
+        TabType.html: 'index.html',
+        TabType.css: 'styles.css',
+        TabType.js: 'script.js',
+      };
 
       // Initialize undo/redo cache
       _updateUndoRedoCache(id);
@@ -107,43 +247,23 @@ class _IDEScreenState extends State<IDEScreen> {
       // Initialize output expansion state (collapsed by default)
       _outputExpanded[id] = false;
 
+      // Initialize new UI layout states
+      _previewExpanded[id] = false; // Preview section collapsed by default
+      _showOutputInPreview[id] =
+          false; // Show preview content by default (not output)
+
       _assignRollNumbers();
     }
 
-    // Register editor views - only register the ones we need
-    for (var i = 0; i < numberOfStudents; i++) {
-      final elementId = _monacoElementIds[i];
-      final divId = _monacoDivIds[i];
-
-      // Clean up any existing DOM elements from previous sessions
-      final existingElement = html.document.getElementById(divId);
-      if (existingElement != null) {
-        existingElement.remove();
-        print('Cleaned up existing DOM element: $divId');
-      }
-
-      // Check if already registered to avoid duplicate registration
-      try {
-        ui_web.platformViewRegistry.registerViewFactory(
-          elementId,
-          (int viewId) =>
-              html.DivElement()
-                ..id = divId
-                ..style.width = '100%'
-                ..style.height = '100%',
-        );
-        print('Registered view factory for $elementId with div $divId');
-      } catch (e) {
-        print('View factory $elementId already registered or error: $e');
-      }
-    }
+    // Register DOM elements for all editors
+    _registerDOMElements();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Reduced delay since DOM elements are now always present
       Future.delayed(const Duration(milliseconds: 500), () {
         _setupMonacoEditor();
       });
-      _initializePyodide();
+      // Python initialization removed - now using HTML/CSS/JS
 
       // Add visibility change listener to detect when user comes back to tab
       html.document.addEventListener('visibilitychange', (_) {
@@ -199,13 +319,6 @@ class _IDEScreenState extends State<IDEScreen> {
     });
   }
 
-  // Method to manually trigger reinitialization
-  void _forceReinitializeEditors() {
-    print('Forcing editor reinitialization...');
-    _editorsNeedReinitialization = true;
-    _checkAndReinitializeEditors();
-  }
-
   void _checkAndReinitializeEditors() {
     // Check if any of the Monaco editor DOM elements are missing or improperly initialized
     bool needsReinit = false;
@@ -235,53 +348,6 @@ class _IDEScreenState extends State<IDEScreen> {
     }
   }
 
-  Future<void> _initializePyodide() async {
-    // Define the callback function for Python output
-    void onOutput(String message) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          setState(() {
-            // Add output to the active editor (you might want to track which editor is active)
-            final activeEditorId =
-                _currentRunningEditorId ??
-                _monacoDivIds[0]; // or track active editor
-            _editorOutputs[activeEditorId] =
-                (_editorOutputs[activeEditorId] ?? '') + message;
-          });
-        }
-      });
-    }
-
-    try {
-      // Show a loading message in the output
-      setState(() => _output = 'Initializing Python environment...\n');
-
-      // Add timeout to prevent hanging
-      String initMessage = await interop
-          .initPyodide(onOutput)
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () {
-              throw Exception(
-                'Pyodide initialization timed out after 30 seconds',
-              );
-            },
-          );
-
-      // Update the UI with the success message
-      if (mounted) {
-        setState(() {
-          _output += '$initMessage\n\n';
-          _pyodideLoaded = true; // Set the flag!
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _output += 'Error initializing Pyodide: $e\n');
-      }
-    }
-  }
-
   void _setupMonacoEditor() {
     // Prevent multiple simultaneous initialization attempts
     if (_isInitializingMonaco) {
@@ -292,19 +358,17 @@ class _IDEScreenState extends State<IDEScreen> {
     _isInitializingMonaco = true;
     print('Starting Monaco editor setup...');
 
-    const initialCode = '''# Welcome to Python Web IDE!
-# Write your Python code here and click Run.
-
-# Simple example
-x = 2 + 3
-print("Result:", x)
-
-# Test function
-def hello():
-    return "Hello from Python!"
-
-print(hello())
-''';
+    const initialCode = '''<!-- Welcome to HTML Web IDE! -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Welcome</title>
+</head>
+<body>
+    <h1>Welcome to HTML Web IDE!</h1>
+    <p>Switch between HTML, CSS, and JS tabs to build your web project.</p>
+</body>
+</html>''';
 
     print('Setting up Monaco editors...'); // Debug log
 
@@ -315,14 +379,19 @@ print(hello())
     _initializeEditorsSequentially(initialCode);
   }
 
-  Future<void> _initializeEditorsSequentially(String initialCode) async {
+  Future<void> _initializeEditorsSequentially(String defaultCode) async {
     // Shorter wait since DOM elements are now always present
     await Future.delayed(const Duration(milliseconds: 500));
 
     for (int i = 0; i < numberOfStudents; i++) {
       final id = _monacoDivIds[i];
+      final currentTab = _currentTabs[id] ?? TabType.html;
+      final initialCode = _tabContents[id]?[currentTab] ?? defaultCode;
+
       _lastText[id] = initialCode;
       _codeHistories[id]?.addState(initialCode);
+
+      final language = _getLanguageForTab(currentTab);
 
       // Check if DOM element exists before initializing
       print('Checking DOM element for $id...');
@@ -369,11 +438,17 @@ print(hello())
             _currentTheme,
             _fontSize,
             (content) => _onContentChanged(content, id),
+            language,
           );
 
           // Mark element as initialized
           element.setAttribute('data-monaco-initialized', 'true');
           print('Editor initialized: $id');
+
+          // Ensure content is set after initialization
+          await Future.delayed(const Duration(milliseconds: 100));
+          interop.setMonacoValue(id, initialCode);
+          _lastText[id] = initialCode;
         }
 
         // Delay between initializations
@@ -390,6 +465,150 @@ print(hello())
     // Reset the initialization flag
     _isInitializingMonaco = false;
     print('Monaco editor setup completed');
+
+    // Ensure all tab contents are properly loaded
+    await _refreshAllTabContents();
+
+    // Trigger initial preview updates for all editors
+    await Future.delayed(const Duration(milliseconds: 500));
+    for (final id in _monacoDivIds) {
+      _updateLivePreview(id);
+    }
+  }
+
+  String _getLanguageForTab(TabType tab) {
+    switch (tab) {
+      case TabType.html:
+        return 'html';
+      case TabType.css:
+        return 'css';
+      case TabType.js:
+        return 'javascript';
+    }
+  }
+
+  String _getFileExtensionForTab(TabType tab) {
+    switch (tab) {
+      case TabType.html:
+        return '.html';
+      case TabType.css:
+        return '.css';
+      case TabType.js:
+        return '.js';
+    }
+  }
+
+  void _switchTab(String editorId, TabType newTab) {
+    if (_currentTabs[editorId] == newTab) return;
+
+    // Save current content before switching
+    final currentTab = _currentTabs[editorId];
+    if (currentTab != null) {
+      try {
+        final currentContent = interop.getMonacoValue(editorId);
+        _tabContents[editorId]?[currentTab] = currentContent;
+      } catch (e) {
+        print('Error saving current content: $e');
+      }
+    }
+
+    // Switch to new tab
+    setState(() {
+      _currentTabs[editorId] = newTab;
+    });
+
+    // Load new tab content with a small delay to ensure Monaco is ready
+    Future.delayed(const Duration(milliseconds: 100), () {
+      final newContent = _tabContents[editorId]?[newTab] ?? '';
+      final language = _getLanguageForTab(newTab);
+
+      try {
+        interop.setMonacoLanguage(editorId, language);
+        interop.setMonacoValue(editorId, newContent);
+        _lastText[editorId] = newContent;
+        print(
+          'Switched to $newTab tab for $editorId with content length: ${newContent.length}',
+        );
+      } catch (e) {
+        print('Error switching tab: $e');
+      }
+
+      // Clear undo/redo history for clean switch
+      _codeHistories[editorId]?.clear();
+      _codeHistories[editorId]?.addState(newContent);
+      _updateUndoRedoCache(editorId);
+
+      // Update live preview with new tab content
+      _updateLivePreview(editorId);
+    });
+  }
+
+  void _updateLivePreview(String editorId) {
+    // Cancel existing timer to debounce updates
+    _previewUpdateTimers[editorId]?.cancel();
+
+    // Set a new timer to update after user stops typing
+    _previewUpdateTimers[editorId] = Timer(
+      const Duration(milliseconds: 500),
+      () {
+        if (_livePreviewEnabled[editorId] == true) {
+          _refreshPreviewContent(editorId);
+        }
+      },
+    );
+  }
+
+  void _refreshPreviewContent(String editorId) {
+    final htmlContent = _tabContents[editorId]?[TabType.html] ?? '';
+    final cssContent = _tabContents[editorId]?[TabType.css] ?? '';
+    final jsContent = _tabContents[editorId]?[TabType.js] ?? '';
+
+    final completeHTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Preview</title>
+    <style>
+$cssContent
+    </style>
+</head>
+<body>
+$htmlContent
+    <script>
+try {
+$jsContent
+} catch(e) {
+  console.error('JavaScript Error:', e);
+  document.body.innerHTML += '<div style="color:red;padding:10px;background:#ffebee;margin:10px;border-radius:5px;"><strong>JavaScript Error:</strong> ' + e.message + '</div>';
+}
+    </script>
+</body>
+</html>
+  ''';
+
+    // Update the iframe content
+    _injectHTMLToPreview(editorId, completeHTML);
+  }
+
+  void _injectHTMLToPreview(String editorId, String htmlContent) {
+    // Get the index from editor ID
+    final index = _monacoDivIds.indexOf(editorId);
+    if (index >= 0 && index < _previewElementIds.length) {
+      final previewId = _previewElementIds[index];
+
+      // Use JavaScript interop to update iframe
+      try {
+        final iframe =
+            html.document.getElementById(previewId) as html.IFrameElement?;
+        if (iframe != null) {
+          iframe.srcdoc = htmlContent;
+        }
+      } catch (e) {
+        print('Error updating preview: $e');
+      }
+    }
   }
 
   Future<void> _cleanupEditors() async {
@@ -417,64 +636,84 @@ print(hello())
     });
 
     await _cleanupEditors();
+    await _registerDOMElements(); // Ensure DOM elements are registered
 
     await Future.delayed(const Duration(milliseconds: 100));
     _setupMonacoEditor();
+  }
+
+  Future<void> _registerDOMElements() async {
+    // Register preview iframe views for all possible students
+    for (var i = 0; i < 4; i++) {
+      // Always register for maximum 4 students
+      final previewId = _previewElementIds[i];
+
+      try {
+        ui_web.platformViewRegistry.registerViewFactory(
+          previewId,
+          (int viewId) =>
+              html.IFrameElement()
+                ..id = previewId
+                ..style.width = '100%'
+                ..style.height = '100%'
+                ..style.border = 'none'
+                ..srcdoc =
+                    '<html><body><p>Preview will appear here...</p></body></html>',
+        );
+      } catch (e) {
+        print('Preview view factory $previewId already registered: $e');
+      }
+    }
+
+    // Register editor views for all possible students
+    for (var i = 0; i < 4; i++) {
+      // Always register for maximum 4 students
+      final elementId = _monacoElementIds[i];
+      final divId = _monacoDivIds[i];
+
+      // Clean up any existing DOM elements from previous sessions
+      final existingElement = html.document.getElementById(divId);
+      if (existingElement != null) {
+        existingElement.remove();
+        print('Cleaned up existing DOM element: $divId');
+      }
+
+      // Check if already registered to avoid duplicate registration
+      try {
+        ui_web.platformViewRegistry.registerViewFactory(
+          elementId,
+          (int viewId) =>
+              html.DivElement()
+                ..id = divId
+                ..style.width = '100%'
+                ..style.height = '100%',
+        );
+        print('Registered view factory for $elementId with div $divId');
+      } catch (e) {
+        print('View factory $elementId already registered or error: $e');
+      }
+    }
   }
 
   void _onContentChanged(String content, String editorId) {
     // Run in post-frame callback to avoid calling setState during a build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_preventHistoryUpdate && content != _lastText[editorId]) {
+        final currentTab = _currentTabs[editorId];
+        if (currentTab != null) {
+          _tabContents[editorId]?[currentTab] = content;
+        }
+
         _codeHistories[editorId]?.addState(content);
         _lastText[editorId] = content;
 
         _updateUndoRedoCache(editorId);
+
+        _updateLivePreview(editorId);
+
         setState(() {}); // Update Undo/Redo button states
       }
     });
-  }
-
-  Future<void> _runCode([String? editorId]) async {
-    final id = editorId ?? _monacoDivIds[0];
-
-    // Guard against running before Pyodide is loaded
-    if (!_pyodideLoaded) {
-      _showSnackBar('Python environment is still initializing. Please wait.');
-      return;
-    }
-    _currentRunningEditorId = id;
-
-    setState(() {
-      _editorOutputs[id] = '';
-      _isLoading = true;
-    });
-
-    try {
-      final code = interop.getMonacoValue(id);
-      final String? error = await interop.runPyodideCode(code);
-
-      if (error != null && mounted) {
-        setState(
-          () => _editorOutputs[id] = '${_editorOutputs[id] ?? ''}\n$error',
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(
-          () =>
-              _editorOutputs[id] =
-                  '${_editorOutputs[id] ?? ''}\nExecution error: $e',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _currentRunningEditorId = null;
-        });
-      }
-    }
   }
 
   int _generateUniqueRollNumber() {
@@ -618,8 +857,12 @@ print(hello())
         _lastText[editorId] = exampleCode;
         _codeHistories[editorId]?.clear();
         _codeHistories[editorId]?.addState(exampleCode);
-        final fileName = '${exampleName.toLowerCase().replaceAll(' ', '_')}.py';
-        setState(() => _currentFileNames[editorId] = fileName);
+        // Update tab file names based on content type
+        final currentTab = _currentTabs[editorId] ?? TabType.html;
+        final extension = _getFileExtensionForTab(currentTab);
+        final fileName =
+            '${exampleName.toLowerCase().replaceAll(' ', '_')}$extension';
+        setState(() => _tabFileNames[editorId]![currentTab] = fileName);
       } else {
         // Load in all editors
         for (final id in _monacoDivIds) {
@@ -627,9 +870,13 @@ print(hello())
           _lastText[id] = exampleCode;
           _codeHistories[id]?.clear();
           _codeHistories[id]?.addState(exampleCode);
+          // Update current tab content and filename
+          final currentTab = _currentTabs[id] ?? TabType.html;
+          final extension = _getFileExtensionForTab(currentTab);
           final fileName =
-              '${exampleName.toLowerCase().replaceAll(' ', '_')}.py';
-          _currentFileNames[id] = fileName;
+              '${exampleName.toLowerCase().replaceAll(' ', '_')}$extension';
+          _tabContents[id]![currentTab] = exampleCode;
+          _tabFileNames[id]![currentTab] = fileName;
         }
         setState(() {});
       }
@@ -705,21 +952,25 @@ print(hello())
 
   void _showSaveDialog([String? editorId]) {
     final id = editorId ?? _monacoDivIds[0];
+    final currentTab = _currentTabs[id] ?? TabType.html;
+    final currentFileName =
+        _tabFileNames[id]?[currentTab] ??
+        'untitled${_getFileExtensionForTab(currentTab)}';
     final TextEditingController fileNameController = TextEditingController(
-      text: _currentFileNames[id] ?? 'untitled.py',
+      text: currentFileName,
     );
 
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Save Python File'),
+          title: Text('Save ${currentTab.name.toUpperCase()} File'),
           backgroundColor: Colors.grey[800],
           content: TextField(
             controller: fileNameController,
             decoration: const InputDecoration(
               labelText: 'File name',
-              hintText: 'Enter file name with .py extension',
+              hintText: 'Enter file name with extension',
             ),
           ),
           actions: [
@@ -730,11 +981,15 @@ print(hello())
             ElevatedButton(
               onPressed: () {
                 String fileName = fileNameController.text.trim();
-                if (fileName.isEmpty) fileName = 'untitled.py';
-                if (!fileName.endsWith('.py')) fileName += '.py';
+                if (fileName.isEmpty) {
+                  fileName = 'untitled${_getFileExtensionForTab(currentTab)}';
+                }
+                if (!fileName.contains('.')) {
+                  fileName += _getFileExtensionForTab(currentTab);
+                }
 
                 _downloadFile(fileName, interop.getMonacoValue(id));
-                setState(() => _currentFileNames[id] = fileName);
+                setState(() => _tabFileNames[id]![currentTab] = fileName);
                 Navigator.of(context).pop();
                 _showSnackBar('File saved as $fileName');
               },
@@ -804,21 +1059,91 @@ print(hello())
     print('New position: ${_keyboardPositions[editorId]} for $editorId');
   }
 
-  void _toggleOutputExpansion(String editorId) {
+  // New helper methods for expandable preview functionality
+  void _togglePreviewExpansion(String editorId) {
     setState(() {
-      _outputExpanded[editorId] = !_outputExpanded[editorId]!;
+      final wasExpanded = _previewExpanded[editorId] ?? false;
+      _previewExpanded[editorId] = !wasExpanded;
+
+      // When expanding preview, hide keyboard. When collapsing, show keyboard
+      if (!wasExpanded) {
+        // Expanding - hide keyboard
+        _keyboardPositions[editorId] = null;
+      } else {
+        // Collapsing - show keyboard between editor and preview
+        _keyboardPositions[editorId] = KeyboardPosition.betweenEditorOutput;
+      }
     });
   }
 
-  int _getOutputFlex(String editorId) {
-    final baseFlex = ((1 - _editorHeightRatio) * 100).toInt();
+  void _toggleOutputInPreview(String editorId) {
+    setState(() {
+      _showOutputInPreview[editorId] =
+          !(_showOutputInPreview[editorId] ?? false);
+    });
+  }
 
-    if (_outputExpanded[editorId] == true) {
-      // When expanded, add approximate keyboard height
-      return baseFlex + 25;
+  // Calculate heights accounting for keyboard toolbar and preview expansion
+  Map<String, double> _calculateDynamicHeights(
+    BoxConstraints constraints,
+    int editorIndex,
+  ) {
+    const double keyboardHeight =
+        200.0; // Approximate height for keyboard toolbar
+    const double headerHeight = 85.0; // Account for header + tabbar
+
+    // Check if keyboard is visible for this editor
+    bool keyboardVisible =
+        _keyboardPositions[_monacoDivIds[editorIndex]] != null;
+
+    // Check if preview is expanded
+    bool previewExpanded =
+        _previewExpanded[_monacoDivIds[editorIndex]] ?? false;
+
+    double availableHeight = constraints.maxHeight;
+    double usedHeight = headerHeight + (keyboardVisible ? keyboardHeight : 0);
+    double remainingHeight = availableHeight - usedHeight;
+
+    // Ensure minimum heights
+    remainingHeight = remainingHeight.clamp(200.0, double.infinity);
+
+    double editorHeight;
+    double previewHeight;
+
+    if (previewExpanded && !keyboardVisible) {
+      // When preview is expanded and keyboard is hidden, give more space to preview
+      editorHeight = remainingHeight * 0.4; // 40% for editor
+      previewHeight = remainingHeight * 0.6 - 10; // 60% for expanded preview
+    } else {
+      // Normal layout
+      editorHeight = remainingHeight * 0.7; // 70% of remaining height
+      previewHeight =
+          remainingHeight * 0.3 - 10; // 30% of remaining height minus padding
     }
 
-    return baseFlex;
+    return {
+      'editor': editorHeight,
+      'preview': previewHeight,
+      'remaining': remainingHeight,
+    };
+  }
+
+  Future<void> _refreshAllTabContents() async {
+    for (int i = 0; i < numberOfStudents; i++) {
+      final id = _monacoDivIds[i];
+      final currentTab = _currentTabs[id] ?? TabType.html;
+      final content = _tabContents[id]?[currentTab] ?? '';
+
+      try {
+        interop.setMonacoValue(id, content);
+        _lastText[id] = content;
+        print('Refreshed content for editor $id, tab: $currentTab');
+      } catch (error) {
+        print('Error refreshing content for $id: $error');
+      }
+
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
   }
 
   Widget _buildKeyboard(int editorIndex) {
@@ -1013,14 +1338,17 @@ print(hello())
 
           // Set the generated code in the corresponding editor
           final editorId = _monacoDivIds[i];
+          final currentTab = _currentTabs[editorId] ?? TabType.html;
           interop.setMonacoValue(editorId, response.text);
           _lastText[editorId] = response.text;
           _codeHistories[editorId]?.clear();
           _codeHistories[editorId]?.addState(response.text);
 
-          // Update filename to reflect the prompt
-          final fileName = '${_sanitizeFilename(prompt)}_v${i + 1}.py';
-          setState(() => _currentFileNames[editorId] = fileName);
+          // Update tab content and filename to reflect the prompt
+          _tabContents[editorId]![currentTab] = response.text;
+          final extension = _getFileExtensionForTab(currentTab);
+          final fileName = '${_sanitizeFilename(prompt)}_v${i + 1}$extension';
+          setState(() => _tabFileNames[editorId]![currentTab] = fileName);
         } else {
           // If generation failed for this editor, add error message
           generatedSamples.add(
@@ -1111,6 +1439,159 @@ print(hello())
     _promptFocus.requestFocus();
   }
 
+  void _previewHTML(String editorId) {
+    final htmlContent = _tabContents[editorId]?[TabType.html] ?? '';
+    final cssContent = _tabContents[editorId]?[TabType.css] ?? '';
+    final jsContent = _tabContents[editorId]?[TabType.js] ?? '';
+
+    final completeHTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Preview</title>
+    <style>
+$cssContent
+    </style>
+</head>
+<body>
+$htmlContent
+    <script>
+$jsContent
+    </script>
+</body>
+</html>
+  ''';
+
+    setState(() {
+      _editorOutputs[editorId] = 'HTML Preview Generated';
+    });
+
+    // You can implement iframe preview or new window preview here
+    _showHTMLPreviewDialog(completeHTML);
+  }
+
+  void _showHTMLPreviewDialog(String htmlContent) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('HTML Preview'),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 400,
+              child: ClipRect(
+                child: HtmlElementView(
+                  viewType: 'html-preview',
+                  onPlatformViewCreated: (id) {
+                    // Inject HTML content into iframe
+                  },
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _validateCode(String editorId, TabType tabType) {
+    final content = _tabContents[editorId]?[tabType] ?? '';
+    String validationResult = '';
+
+    switch (tabType) {
+      case TabType.html:
+        validationResult = _validateHTML(content);
+        break;
+      case TabType.css:
+        validationResult = _validateCSS(content);
+        break;
+      case TabType.js:
+        validationResult = _validateJS(content);
+        break;
+    }
+
+    setState(() {
+      _editorOutputs[editorId] = validationResult;
+    });
+  }
+
+  String _validateHTML(String html) {
+    // Basic HTML validation
+    if (html.trim().isEmpty) {
+      return 'HTML is empty.';
+    }
+
+    // Check for basic HTML structure
+    List<String> issues = [];
+    if (!html.contains('<!DOCTYPE')) {
+      issues.add('Missing DOCTYPE declaration');
+    }
+    if (!html.contains('<html')) {
+      issues.add('Missing <html> tag');
+    }
+    if (!html.contains('<head')) {
+      issues.add('Missing <head> section');
+    }
+    if (!html.contains('<body')) {
+      issues.add('Missing <body> section');
+    }
+
+    if (issues.isEmpty) {
+      return 'HTML structure looks good! ✅';
+    } else {
+      return 'HTML Issues Found:\n${issues.map((issue) => '• $issue').join('\n')}';
+    }
+  }
+
+  String _validateCSS(String css) {
+    // Basic CSS validation
+    if (css.trim().isEmpty) {
+      return 'CSS is empty.';
+    }
+
+    // Count braces to check for balance
+    int openBraces = css.split('{').length - 1;
+    int closeBraces = css.split('}').length - 1;
+
+    if (openBraces != closeBraces) {
+      return 'CSS Syntax Error: Unmatched braces ($openBraces opening, $closeBraces closing)';
+    }
+
+    return 'CSS syntax looks good! ✅';
+  }
+
+  String _validateJS(String js) {
+    // Basic JavaScript validation
+    if (js.trim().isEmpty) {
+      return 'JavaScript is empty.';
+    }
+
+    // Count parentheses and braces for basic balance check
+    int openParens = js.split('(').length - 1;
+    int closeParens = js.split(')').length - 1;
+    int openBraces = js.split('{').length - 1;
+    int closeBraces = js.split('}').length - 1;
+
+    List<String> issues = [];
+    if (openParens != closeParens) {
+      issues.add('Unmatched parentheses');
+    }
+    if (openBraces != closeBraces) {
+      issues.add('Unmatched braces');
+    }
+
+    if (issues.isEmpty) {
+      return 'JavaScript syntax looks good! ✅';
+    } else {
+      return 'JavaScript Issues Found:\n${issues.map((issue) => '• $issue').join('\n')}';
+    }
+  }
+
   // Show history panel
   void _showHistory() {
     setState(() {
@@ -1183,7 +1664,7 @@ print(hello())
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Python Web IDE - $numberOfStudents Student${numberOfStudents == 1 ? '' : 's'}',
+          'HTML Web IDE - $numberOfStudents Student${numberOfStudents == 1 ? '' : 's'}',
         ),
         backgroundColor: Colors.grey[900],
         actions: [
@@ -1332,13 +1813,15 @@ print(hello())
 
                     return SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
-                      child: IntrinsicHeight(
+                      child: SizedBox(
+                        height: constraints.maxHeight,
                         child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             for (int i = 0; i < numberOfStudents; i++)
                               Container(
                                 width: responsiveWidth,
+                                height: constraints.maxHeight,
                                 decoration: BoxDecoration(
                                   border: Border.all(
                                     color: Colors.blue.withOpacity(0.5),
@@ -1409,6 +1892,69 @@ print(hello())
                                         ),
                                       ),
                                     ),
+                                    //TabBar
+                                    Container(
+                                      height: 45,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[800],
+                                        border: const Border(
+                                          bottom: BorderSide(
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children:
+                                            TabType.values.map((tab) {
+                                              final isActive =
+                                                  _currentTabs[_monacoDivIds[i]] ==
+                                                  tab;
+                                              return Expanded(
+                                                child: GestureDetector(
+                                                  onTap:
+                                                      () => _switchTab(
+                                                        _monacoDivIds[i],
+                                                        tab,
+                                                      ),
+                                                  child: Container(
+                                                    decoration: BoxDecoration(
+                                                      color:
+                                                          isActive
+                                                              ? Colors.blue[600]
+                                                              : Colors
+                                                                  .transparent,
+                                                      border: Border(
+                                                        right: BorderSide(
+                                                          color:
+                                                              Colors.grey[600]!,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    child: Center(
+                                                      child: Text(
+                                                        tab.name.toUpperCase(),
+                                                        style: TextStyle(
+                                                          color:
+                                                              isActive
+                                                                  ? Colors.white
+                                                                  : Colors
+                                                                      .grey[300],
+                                                          fontWeight:
+                                                              isActive
+                                                                  ? FontWeight
+                                                                      .bold
+                                                                  : FontWeight
+                                                                      .normal,
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              );
+                                            }).toList(),
+                                      ),
+                                    ),
 
                                     // Show keyboard above editor if selected
                                     if (_keyboardPositions[_monacoDivIds[i]] ==
@@ -1416,34 +1962,48 @@ print(hello())
                                       _buildKeyboard(i),
 
                                     // Editor section
-                                    Expanded(
-                                      key: ValueKey(
-                                        'editor-expanded-${_monacoElementIds[i]}',
-                                      ),
-                                      flex: (_editorHeightRatio * 100).toInt(),
-                                      child: Stack(
-                                        key: ValueKey(
-                                          'editor-stack-${_monacoElementIds[i]}',
-                                        ),
-                                        children: [
-                                          HtmlElementView(
-                                            key: ValueKey(_monacoElementIds[i]),
-                                            viewType: _monacoElementIds[i],
+                                    Builder(
+                                      builder: (context) {
+                                        final heights =
+                                            _calculateDynamicHeights(
+                                              constraints,
+                                              i,
+                                            );
+                                        return SizedBox(
+                                          key: ValueKey(
+                                            'editor-expanded-${_monacoElementIds[i]}',
                                           ),
-                                          if (!_monacoInitialized)
-                                            const Center(
-                                              child:
-                                                  CircularProgressIndicator(),
+                                          height: heights['editor']!,
+                                          child: Stack(
+                                            key: ValueKey(
+                                              'editor-stack-${_monacoElementIds[i]}',
                                             ),
-                                        ],
-                                      ),
+                                            children: [
+                                              ClipRect(
+                                                child: HtmlElementView(
+                                                  key: ValueKey(
+                                                    _monacoElementIds[i],
+                                                  ),
+                                                  viewType:
+                                                      _monacoElementIds[i],
+                                                ),
+                                              ),
+                                              if (!_monacoInitialized)
+                                                const Center(
+                                                  child:
+                                                      CircularProgressIndicator(),
+                                                ),
+                                            ],
+                                          ),
+                                        );
+                                      },
                                     ),
 
-                                    // Show keyboard between editor and output if selected and output not expanded
+                                    // Show keyboard between editor and preview if selected and preview not expanded
                                     if (_keyboardPositions[_monacoDivIds[i]] ==
                                             KeyboardPosition
                                                 .betweenEditorOutput &&
-                                        _outputExpanded[_monacoDivIds[i]] !=
+                                        _previewExpanded[_monacoDivIds[i]] !=
                                             true)
                                       _buildKeyboard(i),
 
@@ -1451,114 +2011,307 @@ print(hello())
                                       height: 1,
                                       color: Colors.grey,
                                     ),
-                                    // Output section
-                                    Expanded(
-                                      key: ValueKey(
-                                        'output-expanded-${_monacoElementIds[i]}',
-                                      ),
-                                      flex: _getOutputFlex(_monacoDivIds[i]),
-                                      child: Container(
-                                        key: ValueKey(
-                                          'output-container-${_monacoElementIds[i]}',
-                                        ),
-                                        color: Colors.grey[900],
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Column(
+                                    // Unified expandable preview/output section
+                                    Builder(
+                                      builder: (context) {
+                                        return Expanded(
                                           key: ValueKey(
-                                            'output-column-${_monacoElementIds[i]}',
+                                            'preview-expanded-${_monacoElementIds[i]}',
                                           ),
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
-                                            Row(
+                                          child: Container(
+                                            key: ValueKey(
+                                              'preview-container-${_monacoElementIds[i]}',
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  _showOutputInPreview[_monacoDivIds[i]] ==
+                                                          true
+                                                      ? Colors.grey[900]
+                                                      : Colors.white,
+                                              border: const Border(
+                                                top: BorderSide(
+                                                  color: Colors.grey,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Column(
                                               children: [
-                                                const Icon(
-                                                  Icons.terminal,
-                                                  color: Colors.green,
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Text('Output ${i + 1}'),
-                                                const Spacer(),
-                                                IconButton(
-                                                  icon: const Icon(
-                                                    Icons.play_arrow,
-                                                  ),
-                                                  onPressed:
-                                                      () => _runCode(
-                                                        _monacoDivIds[i],
+                                                // Preview/Output header with controls
+                                                Container(
+                                                  height: 50,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        _showOutputInPreview[_monacoDivIds[i]] ==
+                                                                true
+                                                            ? Colors.grey[800]
+                                                            : Colors.green[700],
+                                                    border: const Border(
+                                                      bottom: BorderSide(
+                                                        color: Colors.grey,
                                                       ),
-                                                  tooltip: 'Run Code',
-                                                ),
-                                                IconButton(
-                                                  icon: const Icon(Icons.clear),
-                                                  onPressed:
-                                                      () => _clearOutput(
-                                                        _monacoDivIds[i],
-                                                      ),
-                                                  tooltip: 'Clear Output',
-                                                ),
-                                                IconButton(
-                                                  icon: Icon(
-                                                    _outputExpanded[_monacoDivIds[i]] ==
-                                                            true
-                                                        ? Icons
-                                                            .keyboard_arrow_down
-                                                        : Icons
-                                                            .keyboard_arrow_up,
+                                                    ),
                                                   ),
-                                                  onPressed:
-                                                      () =>
-                                                          _toggleOutputExpansion(
-                                                            _monacoDivIds[i],
+                                                  child: Row(
+                                                    children: [
+                                                      const SizedBox(width: 8),
+                                                      Icon(
+                                                        _showOutputInPreview[_monacoDivIds[i]] ==
+                                                                true
+                                                            ? Icons.terminal
+                                                            : Icons.preview,
+                                                        color: Colors.white,
+                                                        size: 20,
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      Flexible(
+                                                        child: Text(
+                                                          _showOutputInPreview[_monacoDivIds[i]] ==
+                                                                  true
+                                                              ? 'Output ${i + 1}'
+                                                              : 'Live Preview',
+                                                          style:
+                                                              const TextStyle(
+                                                                color:
+                                                                    Colors
+                                                                        .white,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                                fontSize: 14,
+                                                              ),
+                                                          overflow:
+                                                              TextOverflow
+                                                                  .ellipsis,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+
+                                                      // Toggle between Preview and Output
+                                                      IconButton(
+                                                        icon: Icon(
+                                                          _showOutputInPreview[_monacoDivIds[i]] ==
+                                                                  true
+                                                              ? Icons.preview
+                                                              : Icons.terminal,
+                                                          color: Colors.white,
+                                                          size: 18,
+                                                        ),
+                                                        onPressed:
+                                                            () => _toggleOutputInPreview(
+                                                              _monacoDivIds[i],
+                                                            ),
+                                                        tooltip:
+                                                            _showOutputInPreview[_monacoDivIds[i]] ==
+                                                                    true
+                                                                ? 'Switch to Preview'
+                                                                : 'Switch to Output',
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                              minWidth: 36,
+                                                              minHeight: 36,
+                                                            ),
+                                                      ),
+
+                                                      // Show action buttons based on current mode
+                                                      if (_showOutputInPreview[_monacoDivIds[i]] ==
+                                                          true) ...[
+                                                        // Output mode buttons
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.play_arrow,
+                                                            color: Colors.white,
+                                                            size: 18,
                                                           ),
-                                                  tooltip:
-                                                      _outputExpanded[_monacoDivIds[i]] ==
+                                                          onPressed: () {
+                                                            final currentTab =
+                                                                _currentTabs[_monacoDivIds[i]];
+                                                            if (currentTab ==
+                                                                TabType.html) {
+                                                              _previewHTML(
+                                                                _monacoDivIds[i],
+                                                              );
+                                                            } else {
+                                                              _validateCode(
+                                                                _monacoDivIds[i],
+                                                                currentTab!,
+                                                              );
+                                                            }
+                                                          },
+                                                          tooltip:
+                                                              _currentTabs[_monacoDivIds[i]] ==
+                                                                      TabType
+                                                                          .html
+                                                                  ? 'Preview HTML'
+                                                                  : 'Validate Code',
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 36,
+                                                                minHeight: 36,
+                                                              ),
+                                                        ),
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.clear,
+                                                            color: Colors.white,
+                                                            size: 18,
+                                                          ),
+                                                          onPressed:
+                                                              () => _clearOutput(
+                                                                _monacoDivIds[i],
+                                                              ),
+                                                          tooltip:
+                                                              'Clear Output',
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 36,
+                                                                minHeight: 36,
+                                                              ),
+                                                        ),
+                                                      ] else ...[
+                                                        // Preview mode buttons
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.refresh,
+                                                            color: Colors.white,
+                                                            size: 18,
+                                                          ),
+                                                          onPressed: () {
+                                                            _updateLivePreview(
+                                                              _monacoDivIds[i],
+                                                            );
+                                                          },
+                                                          tooltip:
+                                                              'Refresh Preview',
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 36,
+                                                                minHeight: 36,
+                                                              ),
+                                                        ),
+                                                        // Arrow expand/collapse button beside Refresh button
+                                                        IconButton(
+                                                          icon: Icon(
+                                                            _previewExpanded[_monacoDivIds[i]] ==
+                                                                    true
+                                                                ? Icons
+                                                                    .keyboard_arrow_down
+                                                                : Icons
+                                                                    .keyboard_arrow_up,
+                                                            color: Colors.white,
+                                                            size: 18,
+                                                          ),
+                                                          onPressed:
+                                                              () => _togglePreviewExpansion(
+                                                                _monacoDivIds[i],
+                                                              ),
+                                                          tooltip:
+                                                              _previewExpanded[_monacoDivIds[i]] ==
+                                                                      true
+                                                                  ? 'Collapse Preview'
+                                                                  : 'Expand Preview',
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                minWidth: 36,
+                                                                minHeight: 36,
+                                                              ),
+                                                        ),
+                                                        // Live preview toggle switch (smaller)
+                                                        Tooltip(
+                                                          message:
+                                                              _livePreviewEnabled[_monacoDivIds[i]] ==
+                                                                      true
+                                                                  ? 'Live Preview: ON (Auto-update preview when typing)'
+                                                                  : 'Live Preview: OFF (Manual refresh required)',
+                                                          child: Transform.scale(
+                                                            scale: 0.7,
+                                                            child: Switch(
+                                                              value:
+                                                                  _livePreviewEnabled[_monacoDivIds[i]] ??
+                                                                  true,
+                                                              onChanged: (
+                                                                value,
+                                                              ) {
+                                                                setState(() {
+                                                                  _livePreviewEnabled[_monacoDivIds[i]] =
+                                                                      value;
+                                                                  if (value) {
+                                                                    _updateLivePreview(
+                                                                      _monacoDivIds[i],
+                                                                    );
+                                                                  }
+                                                                });
+                                                              },
+                                                              activeThumbColor:
+                                                                  Colors.white,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                      const SizedBox(width: 8),
+                                                    ],
+                                                  ),
+                                                ),
+
+                                                // Content area - shows either preview or output based on toggle
+                                                Expanded(
+                                                  child:
+                                                      _showOutputInPreview[_monacoDivIds[i]] ==
                                                               true
-                                                          ? 'Collapse'
-                                                          : 'Expand',
+                                                          ? // Output content
+                                                          Container(
+                                                            color:
+                                                                Colors
+                                                                    .grey[900],
+                                                            padding:
+                                                                const EdgeInsets.all(
+                                                                  8.0,
+                                                                ),
+                                                            child: SingleChildScrollView(
+                                                              child: SelectableText(
+                                                                _editorOutputs[_monacoDivIds[i]]
+                                                                            ?.isEmpty ??
+                                                                        true
+                                                                    ? 'Output will appear here...'
+                                                                    : _editorOutputs[_monacoDivIds[i]] ??
+                                                                        '',
+                                                                style: TextStyle(
+                                                                  color:
+                                                                      (_editorOutputs[_monacoDivIds[i]] ??
+                                                                                  '')
+                                                                              .contains(
+                                                                                'Error',
+                                                                              )
+                                                                          ? Colors
+                                                                              .red
+                                                                          : Colors
+                                                                              .white,
+                                                                  fontFamily:
+                                                                      'monospace',
+                                                                  fontSize: 14,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          )
+                                                          : // Preview content
+                                                          Container(
+                                                            color: Colors.white,
+                                                            child: ClipRect(
+                                                              child: HtmlElementView(
+                                                                key: ValueKey(
+                                                                  _previewElementIds[i],
+                                                                ),
+                                                                viewType:
+                                                                    _previewElementIds[i],
+                                                              ),
+                                                            ),
+                                                          ),
                                                 ),
                                               ],
                                             ),
-                                            const Divider(color: Colors.grey),
-                                            Expanded(
-                                              child: SingleChildScrollView(
-                                                child: SelectableText(
-                                                  _editorOutputs[_monacoDivIds[i]]
-                                                              ?.isEmpty ??
-                                                          true
-                                                      ? 'Output will appear here...'
-                                                      : _editorOutputs[_monacoDivIds[i]] ??
-                                                          '',
-                                                  style: TextStyle(
-                                                    color:
-                                                        (_editorOutputs[_monacoDivIds[i]] ??
-                                                                    '')
-                                                                .contains(
-                                                                  'Error',
-                                                                )
-                                                            ? Colors.red
-                                                            : Colors.white,
-                                                    fontFamily: 'monospace',
-                                                    fontSize: 14,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            if (_isLoading)
-                                              const LinearProgressIndicator(
-                                                minHeight: 2,
-                                              ),
-                                          ],
-                                        ),
-                                      ),
+                                          ),
+                                        );
+                                      },
                                     ),
-
-                                    // Show keyboard below output if selected and output not expanded
-                                    if (_keyboardPositions[_monacoDivIds[i]] ==
-                                            KeyboardPosition.belowOutput &&
-                                        _outputExpanded[_monacoDivIds[i]] !=
-                                            true)
-                                      _buildKeyboard(i),
                                   ],
                                 ),
                               ),

@@ -114,7 +114,10 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        clipBehavior: Clip.hardEdge,
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             _buildModeButton('ABC', 0),
             const SizedBox(width: 8),
@@ -489,114 +492,117 @@ class _KeyboardToolbarState extends State<KeyboardToolbar> {
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        children: [
-          // Arrow Navigation Section
-          SizedBox(
-            width: 90,
-            height: 35,
-            child: Stack(
-              children: [
-                // Up Arrow
-                Positioned(
-                  top: 0,
-                  left: 30,
-                  child: _buildArrowButton(
-                    Icons.keyboard_arrow_up,
-                    widget.onArrowUp,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            // Arrow Navigation Section
+            SizedBox(
+              width: 90,
+              height: 35,
+              child: Stack(
+                children: [
+                  // Up Arrow
+                  Positioned(
+                    top: 0,
+                    left: 30,
+                    child: _buildArrowButton(
+                      Icons.keyboard_arrow_up,
+                      widget.onArrowUp,
+                    ),
                   ),
-                ),
-                // Left Arrow
-                Positioned(
-                  top: 15,
-                  left: 0,
-                  child: _buildArrowButton(
-                    Icons.keyboard_arrow_left,
-                    widget.onArrowLeft,
+                  // Left Arrow
+                  Positioned(
+                    top: 15,
+                    left: 0,
+                    child: _buildArrowButton(
+                      Icons.keyboard_arrow_left,
+                      widget.onArrowLeft,
+                    ),
                   ),
-                ),
-                // Down Arrow
-                Positioned(
-                  bottom: 0,
-                  left: 30,
-                  child: _buildArrowButton(
-                    Icons.keyboard_arrow_down,
-                    widget.onArrowDown,
+                  // Down Arrow
+                  Positioned(
+                    bottom: 0,
+                    left: 30,
+                    child: _buildArrowButton(
+                      Icons.keyboard_arrow_down,
+                      widget.onArrowDown,
+                    ),
                   ),
-                ),
-                // Right Arrow
-                Positioned(
-                  top: 15,
-                  left: 60,
-                  child: _buildArrowButton(
-                    Icons.keyboard_arrow_right,
-                    widget.onArrowRight,
+                  // Right Arrow
+                  Positioned(
+                    top: 15,
+                    left: 60,
+                    child: _buildArrowButton(
+                      Icons.keyboard_arrow_right,
+                      widget.onArrowRight,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
+            const SizedBox(width: 8),
 
-          // Space bar
-          Expanded(
-            flex: 4,
-            child: GestureDetector(
-              onTap: () => widget.onKeyPress(' '),
+            // Space bar
+            SizedBox(
+              width: 120,
+              child: GestureDetector(
+                onTap: () => widget.onKeyPress(' '),
+                child: Container(
+                  height: 35,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4C4C4C),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'Space',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+
+            // Backspace
+            GestureDetector(
+              onTap: widget.onBackspace,
               child: Container(
+                width: 50,
                 height: 35,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF4C4C4C),
+                  color: const Color(0xFF5C5C5C),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Center(
-                  child: Text(
-                    'Space',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
+                child: const Icon(
+                  Icons.backspace_outlined,
+                  color: Colors.white70,
+                  size: 16,
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
+            const SizedBox(width: 8),
 
-          // Backspace
-          GestureDetector(
-            onTap: widget.onBackspace,
-            child: Container(
-              width: 50,
-              height: 35,
-              decoration: BoxDecoration(
-                color: const Color(0xFF5C5C5C),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(
-                Icons.backspace_outlined,
-                color: Colors.white70,
-                size: 16,
+            // Enter
+            GestureDetector(
+              onTap: widget.onEnter,
+              child: Container(
+                width: 50,
+                height: 35,
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(
+                  Icons.keyboard_return,
+                  color: Colors.white,
+                  size: 16,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-
-          // Enter
-          GestureDetector(
-            onTap: widget.onEnter,
-            child: Container(
-              width: 50,
-              height: 35,
-              decoration: BoxDecoration(
-                color: Colors.blue,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(
-                Icons.keyboard_return,
-                color: Colors.white,
-                size: 16,
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
