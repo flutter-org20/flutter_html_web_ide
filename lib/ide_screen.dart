@@ -753,17 +753,15 @@ $jsContent
 
   Future<void> _reinitializeEditors() async {
     // Prevent multiple simultaneous reinitializations
-    if (_isInitializingMonaco) {
-      print('Editor reinitialization already in progress, skipping...');
-      return;
+    if (!_isInitializingMonaco) {
+      print('Initialization flag not set, setting it now...');
+      setState(() {
+        _monacoInitialized = false;
+        _isInitializingMonaco = true;
+      });
     }
 
     print('Starting editor reinitialization...');
-
-    setState(() {
-      _monacoInitialized = false;
-      _isInitializingMonaco = true;
-    });
 
     try {
       // Clean up existing Monaco editors first
@@ -780,24 +778,24 @@ $jsContent
         });
       }
     }
-  }
+  } // Track registered view factories to avoid re-registration
 
-  // Track if view factories have been registered to avoid re-registration
-  static bool _viewFactoriesRegistered = false;
+  static final Set<String> _registeredViewFactories = <String>{};
 
   Future<void> _registerDOMElements() async {
-    // Only register view factories once per app lifecycle
-    if (_viewFactoriesRegistered) {
-      print('View factories already registered, skipping...');
-      return;
-    }
-
     print('Registering view factories...');
 
     // Register preview iframe views for all possible students
     for (var i = 0; i < 4; i++) {
-      // Always register for maximum 4 students
       final previewId = _previewElementIds[i];
+
+      // Skip if already registered
+      if (_registeredViewFactories.contains(previewId)) {
+        print(
+          'Preview view factory $previewId already registered, skipping...',
+        );
+        continue;
+      }
 
       try {
         ui_web.platformViewRegistry.registerViewFactory(
@@ -811,19 +809,26 @@ $jsContent
                 ..srcdoc =
                     '<html><body><p>Preview will appear here...</p></body></html>',
         );
-        print('Registered preview view factory: $previewId');
+        _registeredViewFactories.add(previewId);
+        print('Successfully registered preview view factory: $previewId');
       } catch (e) {
-        print('Preview view factory $previewId already registered: $e');
+        print('Failed to register preview view factory $previewId: $e');
+        // Mark as attempted to prevent repeated registration attempts
+        _registeredViewFactories.add(previewId);
       }
     }
 
     // Register editor views for all possible students
     for (var i = 0; i < 4; i++) {
-      // Always register for maximum 4 students
       final elementId = _monacoElementIds[i];
       final divId = _monacoDivIds[i];
 
-      // Check if already registered to avoid duplicate registration
+      // Skip if already registered
+      if (_registeredViewFactories.contains(elementId)) {
+        print('Editor view factory $elementId already registered, skipping...');
+        continue;
+      }
+
       try {
         ui_web.platformViewRegistry.registerViewFactory(
           elementId,
@@ -833,14 +838,16 @@ $jsContent
                 ..style.width = '100%'
                 ..style.height = '100%',
         );
-        print('Registered editor view factory: $elementId with div $divId');
+        _registeredViewFactories.add(elementId);
+        print(
+          'Successfully registered editor view factory: $elementId with div $divId',
+        );
       } catch (e) {
-        print('Editor view factory $elementId already registered: $e');
+        print('Failed to register editor view factory $elementId: $e');
+        // Mark as attempted to prevent repeated registration attempts
+        _registeredViewFactories.add(elementId);
       }
     }
-
-    // Mark as registered
-    _viewFactoriesRegistered = true;
   }
 
   void _onContentChanged(String content, String editorId) {
@@ -1882,6 +1889,15 @@ $jsContent
 
               // Save current state before changing
               await _saveCurrentEditorStates();
+
+              // Immediately show loading state and cleanup editors to prevent flashing
+              setState(() {
+                _monacoInitialized = false;
+                _isInitializingMonaco = true;
+              });
+
+              // Immediately cleanup existing editors to prevent visual glitch
+              await _cleanupEditors();
 
               setState(() {
                 numberOfStudents = value;
