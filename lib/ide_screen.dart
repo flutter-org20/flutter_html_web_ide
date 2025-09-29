@@ -263,6 +263,9 @@ document.addEventListener('DOMContentLoaded', function() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Reduced delay since DOM elements are now always present
       Future.delayed(const Duration(milliseconds: 500), () {
+        setState(() {
+          _isInitializingMonaco = true;
+        });
         _setupMonacoEditor();
       });
       // Python initialization removed - now using HTML/CSS/JS
@@ -306,27 +309,42 @@ document.addEventListener('DOMContentLoaded', function() {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Check if we need to reinitialize editors when coming back to the screen
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndReinitializeEditors();
-    });
+    // Don't check if we're already initializing
+    if (!_isInitializingMonaco) {
+      // Check if we need to reinitialize editors when coming back to the screen
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkAndReinitializeEditors();
+      });
+    }
   }
 
   @override
   void didUpdateWidget(IDEScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Also check when the widget updates
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndReinitializeEditors();
-    });
+    // Don't check if we're already initializing
+    if (!_isInitializingMonaco) {
+      // Also check when the widget updates
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkAndReinitializeEditors();
+      });
+    }
   }
 
   void _checkAndReinitializeEditors() {
+    // Prevent multiple simultaneous checks
+    if (_isInitializingMonaco) {
+      print('Monaco initialization already in progress, skipping check...');
+      return;
+    }
+
     // Check if any of the Monaco editor DOM elements are missing or improperly initialized
     bool needsReinit = false;
 
-    for (final id in _monacoDivIds) {
+    // Only check the editors that should be active based on numberOfStudents
+    for (int i = 0; i < numberOfStudents; i++) {
+      final id = _monacoDivIds[i];
       final element = html.document.getElementById(id);
+
       if (element == null) {
         needsReinit = true;
         print('Editor $id DOM element is missing');
@@ -340,24 +358,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     if (needsReinit || _editorsNeedReinitialization) {
-      print('Reinitializing Monaco editors...');
+      print('Reinitializing Monaco editors from check...');
       _editorsNeedReinitialization = false;
-      _monacoInitialized = false;
 
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _setupMonacoEditor();
+      // Use a longer delay to ensure DOM is ready after widget rebuilds
+      Future.delayed(const Duration(milliseconds: 1000), () async {
+        if (!_isInitializingMonaco) {
+          // Double-check flag
+          setState(() {
+            _monacoInitialized = false;
+            _isInitializingMonaco = true;
+          });
+          _setupMonacoEditor();
+        }
       });
     }
   }
 
   void _setupMonacoEditor() {
-    // Prevent multiple simultaneous initialization attempts
-    if (_isInitializingMonaco) {
-      print('Monaco initialization already in progress, skipping...');
-      return;
-    }
-
-    _isInitializingMonaco = true;
+    print(
+      '_setupMonacoEditor called - _isInitializingMonaco: $_isInitializingMonaco',
+    );
     print('Starting Monaco editor setup...');
 
     const initialCode = '''<!-- Welcome to HTML Web IDE! -->
@@ -382,99 +403,116 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   Future<void> _initializeEditorsSequentially(String defaultCode) async {
-    // Shorter wait since DOM elements are now always present
-    await Future.delayed(const Duration(milliseconds: 500));
+    // Wait longer for DOM elements to be ready (especially after widget rebuild)
+    await Future.delayed(const Duration(milliseconds: 1000));
+
+    print('Initializing $numberOfStudents editors sequentially...');
 
     for (int i = 0; i < numberOfStudents; i++) {
       final id = _monacoDivIds[i];
       final currentTab = _currentTabs[id] ?? TabType.html;
-      final initialCode = _tabContents[id]?[currentTab] ?? defaultCode;
 
+      // Get the content for the current tab, use saved content if available
+      String initialCode = defaultCode;
+      if (_tabContents[id] != null && _tabContents[id]![currentTab] != null) {
+        initialCode = _tabContents[id]![currentTab]!;
+      }
+
+      // Update internal state
       _lastText[id] = initialCode;
       _codeHistories[id]?.addState(initialCode);
 
       final language = _getLanguageForTab(currentTab);
 
-      // Check if DOM element exists before initializing
-      print('Checking DOM element for $id...');
+      print('Initializing editor $i: $id with language: $language');
 
       try {
-        // Wait for DOM element to be available with fewer retries since it should be there
+        // Wait for DOM element to be available with more retries (especially after widget rebuild)
         var retries = 0;
-        while (retries < 10) {
-          final element = html.document.getElementById(id);
+        html.Element? element;
+
+        while (retries < 50) {
+          element = html.document.getElementById(id);
           if (element != null) {
-            // Check if Monaco editor already exists for this element
-            final hasMonacoInstance = element.hasAttribute(
-              'data-monaco-initialized',
-            );
-
-            if (hasMonacoInstance) {
-              print(
-                'Monaco editor already exists for $id, skipping initialization...',
-              );
-              break;
-            }
-
-            // Clear any existing content to prevent duplication
-            element.innerHtml = '';
-            print('DOM element found and cleared for $id, initializing...');
             break;
           }
-          await Future.delayed(const Duration(milliseconds: 100));
+          await Future.delayed(const Duration(milliseconds: 200));
           retries++;
         }
 
-        if (retries >= 10) {
-          print('DOM element $id not found after waiting ${retries * 100}ms');
+        if (retries >= 50 || element == null) {
+          print('DOM element $id not found after waiting ${retries * 200}ms');
           continue;
         }
 
-        // Check again if element already has Monaco instance
-        final element = html.document.getElementById(id);
-        if (element != null &&
-            !element.hasAttribute('data-monaco-initialized')) {
-          print('Initializing Monaco editor for $id with language: $language');
-          await interop.initMonaco(
-            id,
-            initialCode,
-            _currentTheme,
-            _fontSize,
-            (content) => _onContentChanged(content, id),
-            language,
-          );
+        // Check if Monaco editor already exists for this element
+        final hasMonacoInstance = element.hasAttribute(
+          'data-monaco-initialized',
+        );
 
-          // Mark element as initialized
-          element.setAttribute('data-monaco-initialized', 'true');
-          print('Editor initialized: $id with language: $language');
-
-          // Ensure content is set after initialization
+        if (hasMonacoInstance) {
+          print('Monaco editor already exists for $id, destroying first...');
+          await interop.destroyEditor(id);
           await Future.delayed(const Duration(milliseconds: 100));
-          interop.setMonacoValue(id, initialCode);
-          _lastText[id] = initialCode;
         }
 
-        // Delay between initializations
-        await Future.delayed(const Duration(milliseconds: 300));
+        // Ensure the element is completely clean
+        element.innerHtml = '';
+        element.removeAttribute('data-monaco-initialized');
+        print('DOM element found and cleared for $id, initializing...');
+
+        // Initialize Monaco editor
+        print('Initializing Monaco editor for $id with language: $language');
+        await interop.initMonaco(
+          id,
+          initialCode,
+          _currentTheme,
+          _fontSize,
+          (content) => _onContentChanged(content, id),
+          language,
+        );
+
+        // Mark element as initialized
+        element.setAttribute('data-monaco-initialized', 'true');
+        print('Editor initialized: $id with language: $language');
+
+        // Ensure content is properly set after initialization
+        await Future.delayed(const Duration(milliseconds: 200));
+        interop.setMonacoValue(id, initialCode);
+        _lastText[id] = initialCode;
+
+        // Update the tab content to ensure consistency
+        if (_tabContents[id] != null) {
+          _tabContents[id]![currentTab] = initialCode;
+        }
+
+        print(
+          'Content set for editor $id: ${initialCode.substring(0, math.min(50, initialCode.length))}...',
+        );
+
+        // Delay between initializations to prevent conflicts
+        await Future.delayed(const Duration(milliseconds: 400));
       } catch (error) {
         print('Error initializing editor $id: $error');
       }
     }
 
     if (mounted) {
-      setState(() => _monacoInitialized = true);
+      setState(() {
+        _monacoInitialized = true;
+        _isInitializingMonaco = false;
+      });
     }
 
-    // Reset the initialization flag
-    _isInitializingMonaco = false;
-    print('Monaco editor setup completed');
+    print('Monaco editor setup completed for $numberOfStudents editors');
 
     // Ensure all tab contents are properly loaded
     await _refreshAllTabContents();
 
     // Trigger initial preview updates for all editors
     await Future.delayed(const Duration(milliseconds: 500));
-    for (final id in _monacoDivIds) {
+    for (int i = 0; i < numberOfStudents; i++) {
+      final id = _monacoDivIds[i];
       _updateLivePreview(id);
     }
   }
@@ -635,38 +673,127 @@ $jsContent
     }
   }
 
-  Future<void> _cleanupEditors() async {
-    for (int i = 0; i < 4; i++) {
-      // Clean up all 4 editors to be safe
-      try {
-        await interop.destroyEditor(_monacoDivIds[i]);
+  Future<void> _saveCurrentEditorStates() async {
+    print('Saving current editor states...');
 
-        // Also clear the DOM element and remove initialization marker to prevent duplication
-        final element = html.document.getElementById(_monacoDivIds[i]);
-        if (element != null) {
-          element.innerHtml = '';
-          element.removeAttribute('data-monaco-initialized');
-          print('Cleared DOM element: ${_monacoDivIds[i]}');
+    for (int i = 0; i < numberOfStudents; i++) {
+      final id = _monacoDivIds[i];
+      final currentTab = _currentTabs[id] ?? TabType.html;
+
+      try {
+        final element = html.document.getElementById(id);
+        if (element != null &&
+            element.hasAttribute('data-monaco-initialized')) {
+          final currentContent = interop.getMonacoValue(id);
+
+          // Save the current tab content
+          if (_tabContents[id] != null) {
+            _tabContents[id]![currentTab] = currentContent;
+            print(
+              'Saved content for editor $id, tab: $currentTab (${currentContent.length} chars)',
+            );
+          }
         }
-      } catch (error) {
-        print('Error destroying editor ${_monacoDivIds[i]}: $error');
+      } catch (e) {
+        print('Error saving content for editor $id: $e');
       }
     }
   }
 
-  Future<void> _reinitializeEditors() async {
-    setState(() {
-      _monacoInitialized = false;
-    });
+  Future<void> _cleanupEditors() async {
+    // Save current editor states before cleanup
+    final Map<String, Map<TabType, String>> savedContents = {};
 
-    await _cleanupEditors();
-    await _registerDOMElements(); // Ensure DOM elements are registered
+    for (int i = 0; i < 4; i++) {
+      final id = _monacoDivIds[i];
 
-    await Future.delayed(const Duration(milliseconds: 100));
-    _setupMonacoEditor();
+      // Save current content from the Monaco editor if it exists
+      try {
+        final element = html.document.getElementById(id);
+        if (element != null &&
+            element.hasAttribute('data-monaco-initialized')) {
+          final currentContent = interop.getMonacoValue(id);
+          final currentTab = _currentTabs[id] ?? TabType.html;
+
+          // Save the current tab content
+          if (_tabContents[id] != null) {
+            savedContents[id] = Map.from(_tabContents[id]!);
+            savedContents[id]![currentTab] = currentContent;
+          }
+        }
+      } catch (e) {
+        print('Error saving content for $id: $e');
+      }
+
+      // Clean up all 4 editors to be safe
+      try {
+        await interop.destroyEditor(id);
+        print('Destroyed Monaco editor: $id');
+
+        // Also clear the DOM element and remove initialization marker to prevent duplication
+        final element = html.document.getElementById(id);
+        if (element != null) {
+          element.innerHtml = '';
+          element.removeAttribute('data-monaco-initialized');
+          print('Cleared DOM element: $id');
+        }
+      } catch (error) {
+        print('Error destroying editor $id: $error');
+      }
+    }
+
+    // Restore saved contents
+    for (final entry in savedContents.entries) {
+      _tabContents[entry.key] = entry.value;
+    }
+
+    // Wait a bit to ensure cleanup is complete
+    await Future.delayed(const Duration(milliseconds: 200));
   }
 
+  Future<void> _reinitializeEditors() async {
+    // Prevent multiple simultaneous reinitializations
+    if (_isInitializingMonaco) {
+      print('Editor reinitialization already in progress, skipping...');
+      return;
+    }
+
+    print('Starting editor reinitialization...');
+
+    setState(() {
+      _monacoInitialized = false;
+      _isInitializingMonaco = true;
+    });
+
+    try {
+      // Clean up existing Monaco editors first
+      await _cleanupEditors();
+
+      // Let _setupMonacoEditor handle the initialization timing
+      _setupMonacoEditor();
+    } catch (e) {
+      print('Error during editor reinitialization: $e');
+      // Reset flag on error
+      if (mounted) {
+        setState(() {
+          _isInitializingMonaco = false;
+        });
+      }
+    }
+  }
+
+  // Track if view factories have been registered to avoid re-registration
+  static bool _viewFactoriesRegistered = false;
+
   Future<void> _registerDOMElements() async {
+    // Only register view factories once per app lifecycle
+    if (_viewFactoriesRegistered) {
+      print('View factories already registered, skipping...');
+      return;
+    }
+
+    print('Registering view factories...');
+
     // Register preview iframe views for all possible students
     for (var i = 0; i < 4; i++) {
       // Always register for maximum 4 students
@@ -684,6 +811,7 @@ $jsContent
                 ..srcdoc =
                     '<html><body><p>Preview will appear here...</p></body></html>',
         );
+        print('Registered preview view factory: $previewId');
       } catch (e) {
         print('Preview view factory $previewId already registered: $e');
       }
@@ -695,13 +823,6 @@ $jsContent
       final elementId = _monacoElementIds[i];
       final divId = _monacoDivIds[i];
 
-      // Clean up any existing DOM elements from previous sessions
-      final existingElement = html.document.getElementById(divId);
-      if (existingElement != null) {
-        existingElement.remove();
-        print('Cleaned up existing DOM element: $divId');
-      }
-
       // Check if already registered to avoid duplicate registration
       try {
         ui_web.platformViewRegistry.registerViewFactory(
@@ -712,11 +833,14 @@ $jsContent
                 ..style.width = '100%'
                 ..style.height = '100%',
         );
-        print('Registered view factory for $elementId with div $divId');
+        print('Registered editor view factory: $elementId with div $divId');
       } catch (e) {
-        print('View factory $elementId already registered or error: $e');
+        print('Editor view factory $elementId already registered: $e');
       }
     }
+
+    // Mark as registered
+    _viewFactoriesRegistered = true;
   }
 
   void _onContentChanged(String content, String editorId) {
@@ -1754,15 +1878,32 @@ $jsContent
         actions: [
           PopupMenuButton<int>(
             onSelected: (value) async {
+              print('Switching from $numberOfStudents to $value editors');
+
+              // Save current state before changing
+              await _saveCurrentEditorStates();
+
               setState(() {
                 numberOfStudents = value;
                 // Reset selected editor index if it's out of range
                 if (_selectedEditorIndex >= numberOfStudents) {
                   _selectedEditorIndex = 0;
                 }
+                // Mark that editors need reinitialization after widget rebuild
+                _editorsNeedReinitialization = true;
               });
+
               _assignRollNumbers();
-              await _reinitializeEditors();
+
+              // Wait for widget rebuild to complete, then reinitialize editors
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                Future.delayed(const Duration(milliseconds: 500), () async {
+                  await _reinitializeEditors();
+                  print(
+                    'Editor switch completed: $numberOfStudents editors active',
+                  );
+                });
+              });
             },
             itemBuilder:
                 (context) => [

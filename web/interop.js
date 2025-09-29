@@ -267,7 +267,7 @@ function registerWebCompletionProviders() {
 // --- Monaco Interop ---
 window.monacoInterop = {
   init: async (containerId, initialCode, theme, fontSize, onContentChanged, language = 'html') => {
-    console.log('Monaco init called for:', containerId);
+    console.log('Monaco init called for:', containerId, 'with language:', language);
     try {
       // Check if DOM element exists
       const container = document.getElementById(containerId);
@@ -276,10 +276,30 @@ window.monacoInterop = {
       }
       console.log('DOM element found for:', containerId);
 
+      // Check if editor already exists and dispose it first
+      if (monacoEditors[containerId]) {
+        console.log('Existing editor found for', containerId, 'disposing first...');
+        try {
+          monacoEditors[containerId].dispose();
+        } catch (e) {
+          console.warn('Error disposing existing editor:', e);
+        }
+        delete monacoEditors[containerId];
+      }
+
+      // Ensure the container is completely clean
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      container.innerHTML = '';
+
       // Ensure Monaco is loaded first
       if (!monacoLoaded) {
         await loadMonaco();
       }
+
+      // Small delay to ensure DOM is ready
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       const editor = monaco.editor.create(container, {
         value: initialCode,
@@ -347,6 +367,7 @@ window.monacoInterop = {
 
       // Store the editor instance
       monacoEditors[containerId] = editor;
+      console.log('Monaco editor created successfully for:', containerId);
 
       // Register the web completion providers globally (only once)
       registerWebCompletionProviders();
@@ -618,16 +639,38 @@ window.monacoInterop = {
 };
 
 window.destroyMonacoEditor = function(elementId) {
+  console.log(`Destroying Monaco editor: ${elementId}`);
+  
   if(monacoEditors && monacoEditors[elementId]) {
-    // Dispose the Monaco editor
-    monacoEditors[elementId].dispose();
-    delete monacoEditors[elementId];
-    
-    // Also clear the DOM container
-    const container = document.getElementById(elementId);
-    if (container) {
-      container.innerHTML = '';
+    try {
+      // Dispose the Monaco editor instance
+      monacoEditors[elementId].dispose();
+      console.log(`Monaco editor ${elementId} disposed successfully`);
+    } catch (e) {
+      console.error(`Error disposing Monaco editor ${elementId}:`, e);
     }
+    
+    // Remove from our tracking object
+    delete monacoEditors[elementId];
+  }
+  
+  // Clear the DOM container completely
+  const container = document.getElementById(elementId);
+  if (container) {
+    // Remove all children
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+    
+    // Clear innerHTML as backup
+    container.innerHTML = '';
+    
+    // Remove any Monaco-specific attributes
+    container.removeAttribute('data-monaco-initialized');
+    
+    console.log(`DOM container ${elementId} cleared successfully`);
+  } else {
+    console.warn(`DOM container ${elementId} not found for cleanup`);
   }
 }
 
