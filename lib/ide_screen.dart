@@ -2461,8 +2461,29 @@ $jsContent
                                                                   }
                                                                 });
                                                               },
-                                                              activeThumbColor:
-                                                                  Colors.white,
+
+                                                              thumbColor: MaterialStateProperty.resolveWith(
+                                                                (states) =>
+                                                                    states.contains(
+                                                                          MaterialState
+                                                                              .selected,
+                                                                        )
+                                                                        ? Colors
+                                                                            .white
+                                                                        : Colors
+                                                                            .grey[400],
+                                                              ),
+                                                              trackColor: MaterialStateProperty.resolveWith(
+                                                                (states) =>
+                                                                    states.contains(
+                                                                          MaterialState
+                                                                              .selected,
+                                                                        )
+                                                                        ? Colors
+                                                                            .blue
+                                                                        : Colors
+                                                                            .grey[700],
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
