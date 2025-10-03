@@ -33,7 +33,11 @@ class _IDEScreenState extends State<IDEScreen> {
   String _currentTheme = 'vs-dark';
   bool _preventHistoryUpdate = false;
 
-  int numberOfStudents = 4;
+  // Default to a single editor on initial load. Additional editors (up to 4)
+  // are only instantiated (Monaco + layout) after the user explicitly selects
+  // a higher count via the AppBar menu. Internal maps are still pre-populated
+  // for all potential editors so that later expansion is smooth.
+  int numberOfStudents = 1;
   final List<String> _monacoElementIds = [
     'monaco-editor-container-1',
     'monaco-editor-container-2',
@@ -112,8 +116,10 @@ class _IDEScreenState extends State<IDEScreen> {
   void initState() {
     super.initState();
 
-    // Initialize state for each editor
-    for (final id in _monacoDivIds) {
+    // Initialize state only for currently active editors (default = 1).
+    // Remaining editor slots are lazily completed when user increases count.
+    for (int i = 0; i < numberOfStudents; i++) {
+      final id = _monacoDivIds[i];
       _livePreviewEnabled[id] = true;
       _previewUpdateTimers[id] = null;
       _codeHistories[id] = CodeHistory();
@@ -254,6 +260,7 @@ document.addEventListener('DOMContentLoaded', function() {
       _showOutputInPreview[id] =
           false; // Show preview content by default (not output)
 
+      // Assign roll numbers only for active editors
       _assignRollNumbers();
     }
 
@@ -2175,11 +2182,14 @@ $jsContent
                                             }).toList(),
                                       ),
                                     ),
-
-                                    // Show keyboard above editor if selected
-                                    if (_keyboardPositions[_monacoDivIds[i]] ==
-                                        KeyboardPosition.aboveEditor)
-                                      _buildKeyboard(i),
+                                    // Stable slot for keyboard above editor.
+                                    // NOTE: We always keep a placeholder (SizedBox.shrink) when the keyboard is not in this position.
+                                    // This prevents the HtmlElementView (Monaco) from shifting index in the Column children list,
+                                    // which previously caused the underlying platform view to be torn down and appear blank.
+                                    (_keyboardPositions[_monacoDivIds[i]] ==
+                                            KeyboardPosition.aboveEditor)
+                                        ? _buildKeyboard(i)
+                                        : const SizedBox.shrink(),
 
                                     // Editor section
                                     Builder(
@@ -2219,13 +2229,15 @@ $jsContent
                                       },
                                     ),
 
-                                    // Show keyboard between editor and preview if selected and preview not expanded
-                                    if (_keyboardPositions[_monacoDivIds[i]] ==
-                                            KeyboardPosition
-                                                .betweenEditorOutput &&
-                                        _previewExpanded[_monacoDivIds[i]] !=
-                                            true)
-                                      _buildKeyboard(i),
+                                    // Stable slot for keyboard between editor & output.
+                                    // Keeping a consistent child structure avoids unintended rebuilds of the web view factory.
+                                    (_keyboardPositions[_monacoDivIds[i]] ==
+                                                KeyboardPosition
+                                                    .betweenEditorOutput &&
+                                            _previewExpanded[_monacoDivIds[i]] !=
+                                                true)
+                                        ? _buildKeyboard(i)
+                                        : const SizedBox.shrink(),
 
                                     const Divider(
                                       height: 1,
@@ -2462,10 +2474,10 @@ $jsContent
                                                                 });
                                                               },
 
-                                                              thumbColor: MaterialStateProperty.resolveWith(
+                                                              thumbColor: WidgetStateProperty.resolveWith(
                                                                 (states) =>
                                                                     states.contains(
-                                                                          MaterialState
+                                                                          WidgetState
                                                                               .selected,
                                                                         )
                                                                         ? Colors
@@ -2473,10 +2485,10 @@ $jsContent
                                                                         : Colors
                                                                             .grey[400],
                                                               ),
-                                                              trackColor: MaterialStateProperty.resolveWith(
+                                                              trackColor: WidgetStateProperty.resolveWith(
                                                                 (states) =>
                                                                     states.contains(
-                                                                          MaterialState
+                                                                          WidgetState
                                                                               .selected,
                                                                         )
                                                                         ? Colors
@@ -2553,6 +2565,13 @@ $jsContent
                                         );
                                       },
                                     ),
+                                    // Stable slot for keyboard below output.
+                                    // Added to fix scenario where switching to 'below output' removed the editor from view due to
+                                    // dynamic height + child reordering. Reserving a slot ensures stable layout.
+                                    (_keyboardPositions[_monacoDivIds[i]] ==
+                                            KeyboardPosition.belowOutput)
+                                        ? _buildKeyboard(i)
+                                        : const SizedBox.shrink(),
                                   ],
                                 ),
                               ),
