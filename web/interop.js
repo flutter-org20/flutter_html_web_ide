@@ -846,3 +846,371 @@ if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.us
 
 console.log('monacoInterop object created:', window.monacoInterop);
 console.log('pyodideInterop object created:', window.pyodideInterop);
+
+// --- Dynamic Height Calculation System ---
+
+// Debounce helper
+function debounce(fn, wait = 100) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
+// Get height of element by selector with margins
+function getHeight(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return 0;
+  const r = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  const mTop = parseFloat(style.marginTop) || 0;
+  const mBottom = parseFloat(style.marginBottom) || 0;
+  return r.height + mTop + mBottom;
+}
+
+// Get all visible editor containers
+function visibleEditorContainers() {
+  // Look for Flutter platform views that contain Monaco editors
+  const allPlatformViews = Array.from(document.querySelectorAll('flt-platform-view'));
+  return allPlatformViews.filter(el => {
+    const viewType = el.getAttribute('viewtype');
+    return viewType && viewType.startsWith('monaco-editor-container-') && 
+           el.getClientRects().length > 0 && el.offsetHeight > 0;
+  });
+}
+
+// Find keyboard elements that are currently visible
+function getVisibleKeyboard() {
+  // First, try to find keyboard by looking for Flutter widgets with keyboard patterns
+  const flutterElements = document.querySelectorAll('flt-semantics, flt-semantics-host *');
+  
+  for (const el of flutterElements) {
+    if (el.getClientRects().length > 0 && el.offsetHeight > 50) {
+      const content = el.textContent || el.innerHTML || '';
+      const hasKeyboardChars = content.includes('←') || content.includes('→') || 
+                               content.includes('↑') || content.includes('↓') ||
+                               content.includes('Undo') || content.includes('Redo') || 
+                               content.includes('Enter') || content.includes('Backspace');
+      const hasKeyboardClass = el.className.includes('keyboard') || 
+                               el.className.includes('toolbar');
+      
+      if (hasKeyboardChars || hasKeyboardClass) {
+        return el;
+      }
+    }
+  }
+  
+  // Fallback: look for any element with keyboard-like patterns
+  const keyboardSelectors = [
+    '[class*="keyboard"]',
+    '[id*="keyboard"]', 
+    '[class*="toolbar"]'
+  ];
+  
+  for (const selector of keyboardSelectors) {
+    const elements = document.querySelectorAll(selector);
+    for (const el of elements) {
+      if (el.getClientRects().length > 0 && el.offsetHeight > 30) {
+        return el;
+      }
+    }
+  }
+  
+  return null;
+}
+
+// Improved main height calculation and layout function
+function recalcLayout() {
+  try {
+    // Get Flutter's main container
+    const flutterView = document.querySelector('flt-scene-host') || 
+                       document.querySelector('flutter-view') || 
+                       document.body;
+    
+    if (!flutterView) return;
+    
+    const totalH = window.innerHeight;
+    console.log(`Total window height: ${totalH}px`);
+    
+    // More accurate height detection for Flutter web
+    const appBarH = 56; // Standard Flutter AppBar height
+    const searchBarH = 120; // More generous estimate for AI search section
+    
+    // Find editor containers to determine mode
+    const editorContainers = visibleEditorContainers();
+    const numEditors = editorContainers.length;
+    
+    console.log(`Dynamic layout: Found ${numEditors} visible editor containers`);
+    
+    if (numEditors === 0) {
+      // No editors found yet, schedule retry
+      setTimeout(recalcLayout, 1000);
+      return;
+    }
+    
+    // Calculate remaining height after fixed elements
+    let remaining = totalH - (appBarH + searchBarH);
+    
+    // Account for editor headers (roll number + tabs)
+    const editorHeadersH = 85; // Roll number header (40px) + tabs (45px)  
+    remaining -= editorHeadersH;
+    
+    // Ensure minimum height
+    if (remaining < 300) {
+      remaining = Math.max(300, totalH * 0.4);
+    }
+    
+    console.log(`Remaining height after fixed elements: ${remaining}px`);
+    
+    // Find and measure keyboard
+    const keyboardEl = getVisibleKeyboard();
+    let keyboardHeight = 0;
+    
+    if (keyboardEl) {
+      const kbRect = keyboardEl.getBoundingClientRect();
+      keyboardHeight = kbRect.height;
+      
+      console.log(`Found keyboard element with height: ${keyboardHeight}px`);
+      
+      // If keyboard appears collapsed, estimate natural height
+      if (keyboardHeight < 50) {
+        keyboardHeight = 180; // Reasonable default for virtual keyboard
+      }
+      
+      // Cap keyboard height to avoid starving other elements
+      const kbMax = Math.round(remaining * 0.4);
+      keyboardHeight = Math.min(keyboardHeight, kbMax);
+    }
+    
+    // Calculate space for editor and preview after keyboard
+    const contentHeight = Math.max(200, remaining - keyboardHeight);
+    
+    // Apply 80/20 split as requested
+    const editorHeight = Math.floor(contentHeight * 0.8);
+    const previewHeight = Math.max(100, contentHeight - editorHeight);
+    
+    console.log(`Height allocation - Keyboard: ${keyboardHeight}px, Editor: ${editorHeight}px, Preview: ${previewHeight}px`);
+    
+    // Apply CSS-based constraints to prevent overflow
+    addOrUpdateLayoutStyles(editorHeight, previewHeight, keyboardHeight);
+    
+    // Apply heights to Monaco editors specifically
+    editorContainers.forEach((container, index) => {
+      const viewType = container.getAttribute('viewtype');
+      if (!viewType) return;
+      
+      console.log(`Processing editor container ${index + 1}: ${viewType}`);
+      
+      // Apply height constraints to the platform view container
+      container.style.height = `${editorHeight}px`;
+      container.style.maxHeight = `${editorHeight}px`;
+      container.style.overflow = 'hidden';
+      container.style.boxSizing = 'border-box';
+      
+      // Find internal Monaco div
+      const editorDiv = container.querySelector('div[id^="monaco-editor-div-"]');
+      if (editorDiv) {
+        editorDiv.style.height = `${editorHeight}px`;
+        editorDiv.style.maxHeight = `${editorHeight}px`;
+        
+        // Trigger Monaco layout update
+        const editorId = editorDiv.id;
+        if (monacoEditors[editorId]) {
+          try {
+            // Small delay to ensure DOM updates are applied
+            setTimeout(() => {
+              monacoEditors[editorId].layout();
+              console.log(`Updated Monaco layout for: ${editorId}`);
+            }, 100);
+          } catch (e) {
+            console.warn(`Failed to update Monaco layout for ${editorId}:`, e);
+          }
+        }
+      }
+    });
+    
+    // Update keyboard height if found
+    if (keyboardEl) {
+      keyboardEl.style.height = `${keyboardHeight}px`;
+      keyboardEl.style.maxHeight = `${keyboardHeight}px`;
+      keyboardEl.style.overflow = 'hidden';
+      console.log(`Applied height ${keyboardHeight}px to keyboard element`);
+    }
+    
+  } catch (error) {
+    console.error('Error in recalcLayout:', error);
+  }
+}
+
+// Add global CSS styles to prevent overflow
+function addOrUpdateLayoutStyles(editorHeight, previewHeight, keyboardHeight) {
+  let styleEl = document.querySelector('#dynamic-layout-styles');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'dynamic-layout-styles';
+    document.head.appendChild(styleEl);
+  }
+  
+  styleEl.textContent = `
+    /* Prevent body overflow */
+    html, body {
+      height: 100vh !important;
+      max-height: 100vh !important;
+      overflow: hidden !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    
+    /* Flutter root container constraints */
+    flt-scene-host {
+      height: 100vh !important;
+      max-height: 100vh !important;
+      overflow: hidden !important;
+    }
+    
+    /* Editor container constraints */
+    flt-platform-view[viewtype^="monaco-editor-container-"] {
+      height: ${editorHeight}px !important;
+      max-height: ${editorHeight}px !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+    }
+    
+    /* Monaco editor div constraints */
+    div[id^="monaco-editor-div-"] {
+      height: ${editorHeight}px !important;
+      max-height: ${editorHeight}px !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+    }
+    
+    /* Preview container constraints */
+    flt-platform-view[viewtype^="html-preview-"] {
+      height: ${previewHeight}px !important;
+      max-height: ${previewHeight}px !important;
+      overflow: auto !important;
+      box-sizing: border-box !important;
+    }
+    
+    /* Keyboard constraints */
+    ${keyboardHeight > 0 ? `
+    [class*="keyboard"], [id*="keyboard"], [class*="toolbar"] {
+      height: ${keyboardHeight}px !important;
+      max-height: ${keyboardHeight}px !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+    }
+    ` : ''}
+    
+    /* Ensure Flutter widgets don't exceed viewport */
+    flt-semantics, flt-semantics-host {
+      max-height: 100vh !important;
+      overflow: hidden !important;
+    }
+  `;
+  
+  console.log('Updated dynamic layout styles');
+}
+
+// Create debounced version
+const debouncedRecalc = debounce(() => {
+  requestAnimationFrame(recalcLayout);
+}, 100);
+
+// Set up event listeners
+window.addEventListener('resize', debouncedRecalc);
+
+// Watch for layout changes using MutationObserver
+const layoutObserver = new MutationObserver((mutations) => {
+  let shouldRecalc = false;
+  
+  mutations.forEach((mutation) => {
+    // Check for editor visibility changes
+    if (mutation.type === 'childList') {
+      const addedNodes = Array.from(mutation.addedNodes);
+      const removedNodes = Array.from(mutation.removedNodes);
+      
+      const hasEditorChanges = [...addedNodes, ...removedNodes].some(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          return node.matches && (
+            node.matches('flt-platform-view[viewtype^="monaco-editor-container-"]') ||
+            node.querySelector && node.querySelector('flt-platform-view[viewtype^="monaco-editor-container-"]') ||
+            node.matches('[class*="keyboard"]') ||
+            node.querySelector && node.querySelector('[class*="keyboard"]')
+          );
+        }
+        return false;
+      });
+      
+      if (hasEditorChanges) {
+        shouldRecalc = true;
+      }
+    }
+    
+    // Check for attribute changes that might affect layout
+    if (mutation.type === 'attributes') {
+      const target = mutation.target;
+      if (target.matches && (
+        target.matches('flt-platform-view') ||
+        target.matches('[class*="keyboard"]') ||
+        target.matches('[style*="display"]')
+      )) {
+        shouldRecalc = true;
+      }
+    }
+  });
+  
+  if (shouldRecalc) {
+    debouncedRecalc();
+  }
+});
+
+// Start observing
+layoutObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['style', 'class', 'viewtype']
+});
+
+// Wait for Flutter to be ready before starting layout calculations
+function waitForFlutterReady() {
+  if (document.querySelector('flt-scene-host') || document.querySelector('flutter-view')) {
+    console.log('Flutter detected, starting layout system');
+    
+    // Initial calculation after Flutter is ready
+    setTimeout(recalcLayout, 1000);
+    
+    // Set up periodic checks for the first few seconds
+    let checkCount = 0;
+    const periodicCheck = setInterval(() => {
+      checkCount++;
+      recalcLayout();
+      
+      if (checkCount >= 5) { // Check 5 times, then stop
+        clearInterval(periodicCheck);
+      }
+    }, 2000);
+    
+  } else {
+    // Flutter not ready yet, check again
+    setTimeout(waitForFlutterReady, 500);
+  }
+}
+
+// Start waiting for Flutter
+waitForFlutterReady();
+
+// Also recalculate when new editors are initialized
+const originalInit = window.monacoInterop.init;
+window.monacoInterop.init = async function(...args) {
+  const result = await originalInit.apply(this, args);
+  setTimeout(debouncedRecalc, 800); // Recalc after new editor with longer delay
+  return result;
+};
+
+// Export the function for manual triggering if needed
+window.recalcLayout = recalcLayout;
+
+console.log('Dynamic height calculation system initialized');

@@ -195,3 +195,16 @@ Future<void> triggerAutocomplete(String editorId) async {
     print('Failed to trigger autocomplete in editor $editorId: $e');
   }
 }
+
+// Dynamic height calculation function
+@JS('recalcLayout')
+external void _recalcLayout();
+
+Future<void> triggerLayoutRecalculation() async {
+  try {
+    _recalcLayout();
+    print('Layout recalculation triggered');
+  } catch (e) {
+    print('Failed to trigger layout recalculation: $e');
+  }
+}
