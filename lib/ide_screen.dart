@@ -1978,7 +1978,8 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
   }
 
   /// Parse AI response to extract HTML, CSS, and JavaScript code blocks
-  /// Supports multiple formats: fenced code blocks, section headers, or combined HTML
+  /// Ensures clean separation: HTML tab gets structure only (no <style>/<script>),
+  /// CSS tab gets all styles, JS tab gets all scripts
   Map<String, String> _parseAIResponse(String response) {
     final result = <String, String>{'html': '', 'css': '', 'js': ''};
 
@@ -1998,10 +1999,23 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
       ).firstMatch(response);
 
       if (htmlMatch != null || cssMatch != null || jsMatch != null) {
-        // Found fenced code blocks
-        result['html'] = htmlMatch?.group(1)?.trim() ?? '';
-        result['css'] = cssMatch?.group(1)?.trim() ?? '';
-        result['js'] = jsMatch?.group(1)?.trim() ?? '';
+        // Found fenced code blocks - extract and clean them
+        String htmlCode = htmlMatch?.group(1)?.trim() ?? '';
+        String cssCode = cssMatch?.group(1)?.trim() ?? '';
+        String jsCode = jsMatch?.group(1)?.trim() ?? '';
+
+        // If HTML contains embedded <style> or <script>, extract them
+        if (htmlCode.isNotEmpty) {
+          final extracted = _extractAndCleanHTML(htmlCode);
+          result['html'] = extracted['html']!;
+          // Merge extracted CSS and JS with explicitly provided ones
+          result['css'] = _mergeCSSCode(cssCode, extracted['css']!);
+          result['js'] = _mergeJSCode(jsCode, extracted['js']!);
+        } else {
+          result['html'] = htmlCode;
+          result['css'] = cssCode;
+          result['js'] = jsCode;
+        }
 
         print(
           'Parsed fenced code blocks - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
@@ -2032,9 +2046,21 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
       if (htmlHeaderMatch != null ||
           cssHeaderMatch != null ||
           jsHeaderMatch != null) {
-        result['html'] = htmlHeaderMatch?.group(1)?.trim() ?? '';
-        result['css'] = cssHeaderMatch?.group(1)?.trim() ?? '';
-        result['js'] = jsHeaderMatch?.group(1)?.trim() ?? '';
+        String htmlCode = htmlHeaderMatch?.group(1)?.trim() ?? '';
+        String cssCode = cssHeaderMatch?.group(1)?.trim() ?? '';
+        String jsCode = jsHeaderMatch?.group(1)?.trim() ?? '';
+
+        // Clean HTML if it contains embedded styles/scripts
+        if (htmlCode.isNotEmpty) {
+          final extracted = _extractAndCleanHTML(htmlCode);
+          result['html'] = extracted['html']!;
+          result['css'] = _mergeCSSCode(cssCode, extracted['css']!);
+          result['js'] = _mergeJSCode(jsCode, extracted['js']!);
+        } else {
+          result['html'] = htmlCode;
+          result['css'] = cssCode;
+          result['js'] = jsCode;
+        }
 
         print(
           'Parsed section headers - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
@@ -2047,62 +2073,18 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
         }
       }
 
-      // Third, try to extract from a single HTML block with embedded <style> and <script>
-      // This handles cases where AI returns a complete HTML document
+      // Third, try to extract from a complete HTML document with embedded <style> and <script>
       final completeHTMLMatch = RegExp(
-        r'<!DOCTYPE[\s\S]*?</html>',
+        r'<!DOCTYPE[\s\S]*?</html>|<html[\s\S]*?</html>',
         caseSensitive: false,
       ).firstMatch(response);
 
       if (completeHTMLMatch != null) {
         final fullHTML = completeHTMLMatch.group(0)!;
-
-        // Extract CSS from <style> tags
-        final styleMatch = RegExp(
-          r'<style[^>]*>([\s\S]*?)</style>',
-          caseSensitive: false,
-        ).firstMatch(fullHTML);
-        if (styleMatch != null) {
-          result['css'] = styleMatch.group(1)!.trim();
-        }
-
-        // Extract JS from <script> tags
-        final scriptMatch = RegExp(
-          r'<script[^>]*>([\s\S]*?)</script>',
-          caseSensitive: false,
-        ).firstMatch(fullHTML);
-        if (scriptMatch != null) {
-          result['js'] = scriptMatch.group(1)!.trim();
-        }
-
-        // Extract HTML body content (remove style and script tags)
-        String htmlContent =
-            fullHTML
-                .replaceAll(
-                  RegExp(r'<style[^>]*>[\s\S]*?</style>', caseSensitive: false),
-                  '',
-                )
-                .replaceAll(
-                  RegExp(
-                    r'<script[^>]*>[\s\S]*?</script>',
-                    caseSensitive: false,
-                  ),
-                  '',
-                )
-                .trim();
-
-        // Extract just the body content if present
-        final bodyMatch = RegExp(
-          r'<body[^>]*>([\s\S]*?)</body>',
-          caseSensitive: false,
-        ).firstMatch(htmlContent);
-
-        if (bodyMatch != null) {
-          result['html'] = bodyMatch.group(1)!.trim();
-        } else {
-          // If no body tag, use the cleaned HTML
-          result['html'] = htmlContent;
-        }
+        final extracted = _extractAndCleanHTML(fullHTML);
+        result['html'] = extracted['html']!;
+        result['css'] = extracted['css']!;
+        result['js'] = extracted['js']!;
 
         print(
           'Parsed complete HTML - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
@@ -2111,10 +2093,13 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
         return result;
       }
 
-      // Fourth, fallback: if response looks like plain HTML, put it all in HTML tab
+      // Fourth, fallback: if response looks like plain HTML, extract and clean it
       if (response.contains('<') && response.contains('>')) {
-        result['html'] = response.trim();
-        print('Fallback: treating entire response as HTML');
+        final extracted = _extractAndCleanHTML(response.trim());
+        result['html'] = extracted['html']!;
+        result['css'] = extracted['css']!;
+        result['js'] = extracted['js']!;
+        print('Fallback: extracting from HTML-like content');
         return result;
       }
 
@@ -2128,6 +2113,93 @@ Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
     }
 
     return result;
+  }
+
+  /// Extract CSS and JS from HTML and return clean HTML structure only
+  Map<String, String> _extractAndCleanHTML(String html) {
+    final result = <String, String>{'html': '', 'css': '', 'js': ''};
+
+    // Extract ALL CSS from <style> tags (supports multiple style tags)
+    final cssBlocks = <String>[];
+    final styleMatches = RegExp(
+      r'<style[^>]*>([\s\S]*?)</style>',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final match in styleMatches) {
+      final cssContent = match.group(1)?.trim() ?? '';
+      if (cssContent.isNotEmpty) {
+        cssBlocks.add(cssContent);
+      }
+    }
+    result['css'] = cssBlocks.join('\n\n');
+
+    // Extract ALL JavaScript from <script> tags (supports multiple script tags)
+    final jsBlocks = <String>[];
+    final scriptMatches = RegExp(
+      r'<script[^>]*>([\s\S]*?)</script>',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final match in scriptMatches) {
+      final jsContent = match.group(1)?.trim() ?? '';
+      if (jsContent.isNotEmpty) {
+        jsBlocks.add(jsContent);
+      }
+    }
+    result['js'] = jsBlocks.join('\n\n');
+
+    // Remove ALL <style> and <script> tags from HTML
+    String cleanHTML = html
+        .replaceAll(
+          RegExp(r'<style[^>]*>[\s\S]*?</style>', caseSensitive: false),
+          '',
+        )
+        .replaceAll(
+          RegExp(r'<script[^>]*>[\s\S]*?</script>', caseSensitive: false),
+          '',
+        );
+
+    // Extract just the body content if present (cleaner HTML structure)
+    final bodyMatch = RegExp(
+      r'<body[^>]*>([\s\S]*?)</body>',
+      caseSensitive: false,
+    ).firstMatch(cleanHTML);
+
+    if (bodyMatch != null) {
+      result['html'] = bodyMatch.group(1)!.trim();
+    } else {
+      // Remove DOCTYPE, html, head tags if present to get just the content
+      cleanHTML =
+          cleanHTML
+              .replaceAll(RegExp(r'<!DOCTYPE[^>]*>', caseSensitive: false), '')
+              .replaceAll(RegExp(r'<html[^>]*>', caseSensitive: false), '')
+              .replaceAll(RegExp(r'</html>', caseSensitive: false), '')
+              .replaceAll(
+                RegExp(r'<head[^>]*>[\s\S]*?</head>', caseSensitive: false),
+                '',
+              )
+              .replaceAll(RegExp(r'<body[^>]*>', caseSensitive: false), '')
+              .replaceAll(RegExp(r'</body>', caseSensitive: false), '')
+              .trim();
+      result['html'] = cleanHTML;
+    }
+
+    return result;
+  }
+
+  /// Merge CSS code, preferring explicitly provided CSS over extracted CSS
+  String _mergeCSSCode(String explicitCSS, String extractedCSS) {
+    if (explicitCSS.isNotEmpty && extractedCSS.isNotEmpty) {
+      return '$explicitCSS\n\n$extractedCSS';
+    }
+    return explicitCSS.isNotEmpty ? explicitCSS : extractedCSS;
+  }
+
+  /// Merge JS code, preferring explicitly provided JS over extracted JS
+  String _mergeJSCode(String explicitJS, String extractedJS) {
+    if (explicitJS.isNotEmpty && extractedJS.isNotEmpty) {
+      return '$explicitJS\n\n$extractedJS';
+    }
+    return explicitJS.isNotEmpty ? explicitJS : extractedJS;
   }
 
   // Helper method to sanitize filename
