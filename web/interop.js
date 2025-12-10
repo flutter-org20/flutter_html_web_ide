@@ -873,11 +873,19 @@ function getHeight(selector) {
 function visibleEditorContainers() {
   // Look for Flutter platform views that contain Monaco editors
   const allPlatformViews = Array.from(document.querySelectorAll('flt-platform-view'));
-  return allPlatformViews.filter(el => {
+  const filtered = allPlatformViews.filter(el => {
     const viewType = el.getAttribute('viewtype');
-    return viewType && viewType.startsWith('monaco-editor-container-') && 
-           el.getClientRects().length > 0 && el.offsetHeight > 0;
+    const isMonaco = viewType && viewType.startsWith('monaco-editor-container-');
+    const hasSize = el.getClientRects().length > 0 && el.offsetHeight > 0;
+    
+    if (isMonaco && !hasSize) {
+      console.log(`  Editor container ${viewType} found but has no visible size (rect.length=${el.getClientRects().length}, offsetHeight=${el.offsetHeight})`);
+    }
+    
+    return isMonaco && hasSize;
   });
+  
+  return filtered;
 }
 
 // Find keyboard elements that are currently visible
@@ -943,11 +951,36 @@ function recalcLayout() {
     
     console.log(`Dynamic layout: Found ${numEditors} visible editor containers`);
     
+    // Debug: log all platform views and their attributes
+    const allPlatformViews = Array.from(document.querySelectorAll('flt-platform-view'));
+    if (allPlatformViews.length > 0) {
+      console.log(`Total platform views in DOM: ${allPlatformViews.length}`);
+      allPlatformViews.forEach((view, idx) => {
+        const viewType = view.getAttribute('viewtype');
+        const height = view.offsetHeight;
+        const visible = view.getClientRects().length > 0;
+        console.log(`  Platform view ${idx}: viewtype=${viewType}, height=${height}px, visible=${visible}`);
+      });
+    }
+    
     if (numEditors === 0) {
-      // No editors found yet, schedule retry
-      setTimeout(recalcLayout, 1000);
+      // No editors found yet, schedule retry with increasing delay
+      // Try multiple times before giving up
+      const retryCount = window._layoutRetryCount || 0;
+      if (retryCount < 5) {
+        window._layoutRetryCount = retryCount + 1;
+        const delay = Math.min(1000 + (retryCount * 500), 3000);
+        console.log(`No editors found, retrying in ${delay}ms (attempt ${retryCount + 1}/5)`);
+        setTimeout(recalcLayout, delay);
+      } else {
+        console.warn('Could not find editor containers after multiple retries');
+        window._layoutRetryCount = 0;
+      }
       return;
     }
+    
+    // Reset retry count on success
+    window._layoutRetryCount = 0;
     
     // Calculate remaining height after fixed elements
     let remaining = totalH - (appBarH + searchBarH);
