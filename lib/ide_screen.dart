@@ -1837,8 +1837,28 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       print('Connection test passed');
 
-      // Generate code for the selected editor only
-      final response = await PollinationsServices.generateText(prompt);
+      // Generate code with enhanced prompt for separate HTML, CSS, and JS
+      final enhancedPrompt = '''$prompt
+
+Please provide the code in THREE separate sections:
+1. HTML code (structure only, no <style> or <script> tags)
+2. CSS code (styles only, no <style> tags)
+3. JavaScript code (logic only, no <script> tags)
+
+Format your response with clear markers like:
+```html
+[HTML code here]
+```
+```css
+[CSS code here]
+```
+```js
+[JavaScript code here]
+```
+
+Or use clear section headers like "HTML:", "CSS:", "JavaScript:".''';
+
+      final response = await PollinationsServices.generateText(enhancedPrompt);
 
       print('Response received - Success: ${response.success}');
       if (!response.success) {
@@ -1848,25 +1868,51 @@ document.addEventListener('DOMContentLoaded', function() {
       if (response.success && response.text.isNotEmpty) {
         print('Generated text length: ${response.text.length}');
 
-        // Set the generated code in the selected editor
+        // Parse the response to extract HTML, CSS, and JS
+        final parsedCode = _parseAIResponse(response.text);
+
         final editorId = _monacoDivIds[_selectedEditorIndex];
+
+        print('Setting code in editor: $editorId');
+        print('HTML length: ${parsedCode['html']?.length ?? 0}');
+        print('CSS length: ${parsedCode['css']?.length ?? 0}');
+        print('JS length: ${parsedCode['js']?.length ?? 0}');
+
+        // Update all three tabs with the parsed content
+        if (parsedCode['html'] != null && parsedCode['html']!.isNotEmpty) {
+          _tabContents[editorId]![TabType.html] = parsedCode['html']!;
+        }
+        if (parsedCode['css'] != null && parsedCode['css']!.isNotEmpty) {
+          _tabContents[editorId]![TabType.css] = parsedCode['css']!;
+        }
+        if (parsedCode['js'] != null && parsedCode['js']!.isNotEmpty) {
+          _tabContents[editorId]![TabType.js] = parsedCode['js']!;
+        }
+
+        // Update the currently visible tab in Monaco editor
         final currentTab = _currentTabs[editorId] ?? TabType.html;
+        final currentContent = _tabContents[editorId]![currentTab] ?? '';
 
-        print('Setting text in editor: $editorId, tab: $currentTab');
-
-        interop.setMonacoValue(editorId, response.text);
-        _lastText[editorId] = response.text;
+        interop.setMonacoValue(editorId, currentContent);
+        _lastText[editorId] = currentContent;
         _codeHistories[editorId]?.clear();
-        _codeHistories[editorId]?.addState(response.text);
+        _codeHistories[editorId]?.addState(currentContent);
 
-        // Update tab content and filename to reflect the prompt
-        _tabContents[editorId]![currentTab] = response.text;
-        final extension = _getFileExtensionForTab(currentTab);
-        final fileName =
-            '${_sanitizeFilename(prompt)}_editor_${_selectedEditorIndex + 1}$extension';
-        setState(() => _tabFileNames[editorId]![currentTab] = fileName);
+        // Update filenames for all tabs
+        final sanitizedName = _sanitizeFilename(prompt);
+        setState(() {
+          _tabFileNames[editorId]![TabType.html] =
+              '${sanitizedName}_editor_${_selectedEditorIndex + 1}.html';
+          _tabFileNames[editorId]![TabType.css] =
+              '${sanitizedName}_editor_${_selectedEditorIndex + 1}.css';
+          _tabFileNames[editorId]![TabType.js] =
+              '${sanitizedName}_editor_${_selectedEditorIndex + 1}.js';
+        });
 
-        // Save to history with single response
+        // Refresh the live preview to show all three files working together
+        _refreshPreviewContent(editorId);
+
+        // Save to history with the full response
         await PromptHistoryService.savePrompt(
           prompt: prompt,
           responses: [response.text],
@@ -1882,7 +1928,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Show success feedback
         _showSuccessMessage(
-          'Code generated and loaded into Editor ${_selectedEditorIndex + 1}!',
+          'Code generated for all three tabs (HTML, CSS, JS) in Editor ${_selectedEditorIndex + 1}!',
         );
       } else {
         String errorMsg;
@@ -1929,6 +1975,159 @@ document.addEventListener('DOMContentLoaded', function() {
         _isGenerating = false;
       });
     }
+  }
+
+  /// Parse AI response to extract HTML, CSS, and JavaScript code blocks
+  /// Supports multiple formats: fenced code blocks, section headers, or combined HTML
+  Map<String, String> _parseAIResponse(String response) {
+    final result = <String, String>{'html': '', 'css': '', 'js': ''};
+
+    try {
+      // First, try to extract fenced code blocks (```html, ```css, ```js, ```javascript)
+      final htmlMatch = RegExp(
+        r'```html\s*([\s\S]*?)```',
+        caseSensitive: false,
+      ).firstMatch(response);
+      final cssMatch = RegExp(
+        r'```css\s*([\s\S]*?)```',
+        caseSensitive: false,
+      ).firstMatch(response);
+      final jsMatch = RegExp(
+        r'```(?:js|javascript)\s*([\s\S]*?)```',
+        caseSensitive: false,
+      ).firstMatch(response);
+
+      if (htmlMatch != null || cssMatch != null || jsMatch != null) {
+        // Found fenced code blocks
+        result['html'] = htmlMatch?.group(1)?.trim() ?? '';
+        result['css'] = cssMatch?.group(1)?.trim() ?? '';
+        result['js'] = jsMatch?.group(1)?.trim() ?? '';
+
+        print(
+          'Parsed fenced code blocks - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
+        );
+
+        // If we got at least one valid block, return
+        if (result['html']!.isNotEmpty ||
+            result['css']!.isNotEmpty ||
+            result['js']!.isNotEmpty) {
+          return result;
+        }
+      }
+
+      // Second, try to extract from section headers (HTML:, CSS:, JavaScript:)
+      final htmlHeaderMatch = RegExp(
+        r'HTML:\s*([\s\S]*?)(?=CSS:|JavaScript:|JS:|$)',
+        caseSensitive: false,
+      ).firstMatch(response);
+      final cssHeaderMatch = RegExp(
+        r'CSS:\s*([\s\S]*?)(?=HTML:|JavaScript:|JS:|$)',
+        caseSensitive: false,
+      ).firstMatch(response);
+      final jsHeaderMatch = RegExp(
+        r'(?:JavaScript|JS):\s*([\s\S]*?)(?=HTML:|CSS:|$)',
+        caseSensitive: false,
+      ).firstMatch(response);
+
+      if (htmlHeaderMatch != null ||
+          cssHeaderMatch != null ||
+          jsHeaderMatch != null) {
+        result['html'] = htmlHeaderMatch?.group(1)?.trim() ?? '';
+        result['css'] = cssHeaderMatch?.group(1)?.trim() ?? '';
+        result['js'] = jsHeaderMatch?.group(1)?.trim() ?? '';
+
+        print(
+          'Parsed section headers - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
+        );
+
+        if (result['html']!.isNotEmpty ||
+            result['css']!.isNotEmpty ||
+            result['js']!.isNotEmpty) {
+          return result;
+        }
+      }
+
+      // Third, try to extract from a single HTML block with embedded <style> and <script>
+      // This handles cases where AI returns a complete HTML document
+      final completeHTMLMatch = RegExp(
+        r'<!DOCTYPE[\s\S]*?</html>',
+        caseSensitive: false,
+      ).firstMatch(response);
+
+      if (completeHTMLMatch != null) {
+        final fullHTML = completeHTMLMatch.group(0)!;
+
+        // Extract CSS from <style> tags
+        final styleMatch = RegExp(
+          r'<style[^>]*>([\s\S]*?)</style>',
+          caseSensitive: false,
+        ).firstMatch(fullHTML);
+        if (styleMatch != null) {
+          result['css'] = styleMatch.group(1)!.trim();
+        }
+
+        // Extract JS from <script> tags
+        final scriptMatch = RegExp(
+          r'<script[^>]*>([\s\S]*?)</script>',
+          caseSensitive: false,
+        ).firstMatch(fullHTML);
+        if (scriptMatch != null) {
+          result['js'] = scriptMatch.group(1)!.trim();
+        }
+
+        // Extract HTML body content (remove style and script tags)
+        String htmlContent =
+            fullHTML
+                .replaceAll(
+                  RegExp(r'<style[^>]*>[\s\S]*?</style>', caseSensitive: false),
+                  '',
+                )
+                .replaceAll(
+                  RegExp(
+                    r'<script[^>]*>[\s\S]*?</script>',
+                    caseSensitive: false,
+                  ),
+                  '',
+                )
+                .trim();
+
+        // Extract just the body content if present
+        final bodyMatch = RegExp(
+          r'<body[^>]*>([\s\S]*?)</body>',
+          caseSensitive: false,
+        ).firstMatch(htmlContent);
+
+        if (bodyMatch != null) {
+          result['html'] = bodyMatch.group(1)!.trim();
+        } else {
+          // If no body tag, use the cleaned HTML
+          result['html'] = htmlContent;
+        }
+
+        print(
+          'Parsed complete HTML - HTML: ${result['html']!.isNotEmpty}, CSS: ${result['css']!.isNotEmpty}, JS: ${result['js']!.isNotEmpty}',
+        );
+
+        return result;
+      }
+
+      // Fourth, fallback: if response looks like plain HTML, put it all in HTML tab
+      if (response.contains('<') && response.contains('>')) {
+        result['html'] = response.trim();
+        print('Fallback: treating entire response as HTML');
+        return result;
+      }
+
+      // Last resort: put everything in HTML
+      result['html'] = response.trim();
+      print('Last resort: putting entire response in HTML tab');
+    } catch (e) {
+      print('Error parsing AI response: $e');
+      // On error, put entire response in HTML tab
+      result['html'] = response.trim();
+    }
+
+    return result;
   }
 
   // Helper method to sanitize filename
